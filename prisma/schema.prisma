@@ -1,0 +1,243 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────────
+
+enum Role {
+  student
+  faculty
+  hod
+  admin
+}
+
+enum AchievementStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ResumeStatus {
+  draft
+  published
+}
+
+// ── Models ───────────────────────────────────────────────────
+
+model School {
+  id          Int          @id @default(autoincrement())
+  name        String
+  domain      String       @unique
+  users       User[]
+  departments Department[]
+  students    Student[]
+  faculty     Faculty[]
+  semesters   Semester[]
+
+  @@map("schools")
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  schoolId      Int
+  email         String         @unique
+  role          Role
+  name          String
+  school        School         @relation(fields: [schoolId], references: [id])
+  student       Student?
+  faculty       Faculty?
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model Department {
+  id            Int            @id @default(autoincrement())
+  schoolId      Int
+  name          String
+  hodUserId     Int?
+  school        School         @relation(fields: [schoolId], references: [id])
+  students      Student[]
+  faculty       Faculty[]
+  announcements Announcement[]
+
+  @@map("departments")
+}
+
+model Student {
+  id           Int           @id @default(autoincrement())
+  userId       Int           @unique
+  schoolId     Int
+  departmentId Int
+  rollNo       String        @unique
+  branch       String
+  batchYear    Int
+  summary      String?
+  user         User          @relation(fields: [userId], references: [id])
+  school       School        @relation(fields: [schoolId], references: [id])
+  department   Department    @relation(fields: [departmentId], references: [id])
+  cgpaRecords  CgpaRecord[]
+  subjectMarks SubjectMark[]
+  skills       Skill[]
+  projects     Project[]
+  achievements Achievement[]
+  internships  Internship[]
+  resumes      Resume[]
+
+  @@map("students")
+}
+
+model Faculty {
+  id            Int            @id @default(autoincrement())
+  userId        Int            @unique
+  schoolId      Int
+  departmentId  Int
+  user          User           @relation(fields: [userId], references: [id])
+  school        School         @relation(fields: [schoolId], references: [id])
+  department    Department     @relation(fields: [departmentId], references: [id])
+  achievements  Achievement[]  @relation("VerifiedBy")
+  announcements Announcement[]
+
+  @@map("faculty")
+}
+
+model Semester {
+  id             Int           @id @default(autoincrement())
+  schoolId       Int
+  semesterNumber Int
+  name           String
+  school         School        @relation(fields: [schoolId], references: [id])
+  cgpaRecords    CgpaRecord[]
+  subjectMarks   SubjectMark[]
+
+  @@unique([schoolId, semesterNumber])
+  @@map("semesters")
+}
+
+model CgpaRecord {
+  id               Int      @id @default(autoincrement())
+  studentId        Int
+  semesterId       Int
+  cgpa             Float
+  classAverageCgpa Float
+  student          Student  @relation(fields: [studentId], references: [id])
+  semester         Semester @relation(fields: [semesterId], references: [id])
+
+  @@unique([studentId, semesterId])
+  @@map("cgpa_records")
+}
+
+model SubjectMark {
+  id          Int      @id @default(autoincrement())
+  studentId   Int
+  semesterId  Int
+  subjectName String
+  marks       Float
+  student     Student  @relation(fields: [studentId], references: [id])
+  semester    Semester @relation(fields: [semesterId], references: [id])
+
+  @@map("subject_marks")
+}
+
+model Skill {
+  id        Int     @id @default(autoincrement())
+  studentId Int
+  skillName String
+  category  String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  @@map("skills")
+}
+
+model Project {
+  id          Int     @id @default(autoincrement())
+  studentId   Int
+  title       String
+  description String?
+  githubLink  String?
+  student     Student @relation(fields: [studentId], references: [id])
+
+  @@map("projects")
+}
+
+model Achievement {
+  id              Int               @id @default(autoincrement())
+  studentId       Int
+  verifiedBy      Int?
+  title           String
+  category        String
+  status          AchievementStatus @default(pending)
+  rejectionReason String?
+  student         Student           @relation(fields: [studentId], references: [id])
+  faculty         Faculty?          @relation("VerifiedBy", fields: [verifiedBy], references: [id])
+  internship      Internship?
+
+  @@map("achievements")
+}
+
+model Internship {
+  id            Int          @id @default(autoincrement())
+  studentId     Int
+  achievementId Int?         @unique
+  companyName   String
+  role          String
+  student       Student      @relation(fields: [studentId], references: [id])
+  achievement   Achievement? @relation(fields: [achievementId], references: [id])
+
+  @@map("internships")
+}
+
+model ResumeTemplate {
+  id           Int      @id @default(autoincrement())
+  name         String
+  thumbnailUrl String
+  resumes      Resume[]
+
+  @@map("resume_templates")
+}
+
+model Resume {
+  id            Int            @id @default(autoincrement())
+  studentId     Int
+  templateId    Int
+  status        ResumeStatus   @default(draft)
+  includedItems Json
+  pdfUrl        String?
+  student       Student        @relation(fields: [studentId], references: [id])
+  template      ResumeTemplate @relation(fields: [templateId], references: [id])
+
+  @@map("resumes")
+}
+
+model Notification {
+  id      Int     @id @default(autoincrement())
+  userId  Int
+  type    String
+  message String
+  isRead  Boolean @default(false)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model Announcement {
+  id           Int        @id @default(autoincrement())
+  facultyId    Int
+  departmentId Int
+  title        String
+  content      String
+  faculty      Faculty    @relation(fields: [facultyId], references: [id])
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  @@map("announcements")
+}
