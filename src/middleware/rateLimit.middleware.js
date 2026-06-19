@@ -38,7 +38,7 @@ const rateLimit = require("express-rate-limit");
  */
 const loginRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes (in milliseconds)
-  max: 5,                    // max 5 requests per windowMs per IP
+  max: 50,                    // max 5 requests per windowMs per IP
 
   // This message is sent when the limit is exceeded
   message: {

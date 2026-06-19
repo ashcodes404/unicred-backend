@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,7 +7,374 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ── Enums ────────────────────────────────────────────────────
+model School {
+  id          Int          @id @default(autoincrement())
+  name        String
+  domain      String       @unique
+  createdAt   DateTime     @default(now())
+  deletedAt   DateTime?
+  updatedAt   DateTime     @updatedAt
+  departments Department[]
+  faculty     Faculty[]
+  semesters   Semester[]
+  students    Student[]
+  subjects    Subject[]
+  users       User[]
+
+  @@map("schools")
+}
+
+model User {
+  id               Int            @id @default(autoincrement())
+  schoolId         Int
+  email            String         @unique
+  role             Role
+  name             String
+  bio              String?
+  createdAt        DateTime       @default(now())
+  deletedAt        DateTime?
+  emailVerified    Boolean        @default(false)
+  githubUrl        String?
+  isActive         Boolean        @default(true)
+  lastLoginAt      DateTime?
+  linkedinUrl      String?
+  passwordHash     String
+  phoneNumber      String?
+  portfolioUrl     String?
+  profilePhotoUrl  String?
+  updatedAt        DateTime       @updatedAt
+  auditLogs        AuditLog[]
+  hodOfDepartments Department[]   @relation("DepartmentHod")
+  faculty          Faculty?
+  notifications    Notification[]
+  refreshTokens    RefreshToken[]
+  student          Student?
+  school           School         @relation(fields: [schoolId], references: [id])
+
+  @@index([schoolId])
+  @@map("users")
+}
+
+model Department {
+  id            Int            @id @default(autoincrement())
+  schoolId      Int
+  name          String
+  hodUserId     Int?
+  createdAt     DateTime       @default(now())
+  deletedAt     DateTime?
+  updatedAt     DateTime       @updatedAt
+  announcements Announcement[]
+  hod           User?          @relation("DepartmentHod", fields: [hodUserId], references: [id])
+  school        School         @relation(fields: [schoolId], references: [id])
+  faculty       Faculty[]
+  students      Student[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@index([hodUserId], map: "departments_hodUserId_fkey")
+  @@map("departments")
+}
+
+model Student {
+  id              Int           @id @default(autoincrement())
+  userId          Int           @unique
+  schoolId        Int
+  departmentId    Int
+  rollNo          String
+  branch          String
+  batchYear       Int
+  summary         String?
+  createdAt       DateTime      @default(now())
+  currentSemester Int
+  deletedAt       DateTime?
+  graduationYear  Int
+  isPlaced        Boolean       @default(false)
+  updatedAt       DateTime      @updatedAt
+  achievements    Achievement[]
+  cgpaRecords     CgpaRecord[]
+  internships     Internship[]
+  placements      Placement[]
+  projects        Project[]
+  resumes         Resume[]
+  skills          Skill[]
+  department      Department    @relation(fields: [departmentId], references: [id])
+  school          School        @relation(fields: [schoolId], references: [id])
+  user            User          @relation(fields: [userId], references: [id])
+  subjectMarks    SubjectMark[]
+
+  @@unique([schoolId, rollNo])
+  @@index([schoolId])
+  @@index([departmentId])
+  @@map("students")
+}
+
+model Faculty {
+  id            Int            @id @default(autoincrement())
+  userId        Int            @unique
+  schoolId      Int
+  departmentId  Int
+  createdAt     DateTime       @default(now())
+  deletedAt     DateTime?
+  designation   String
+  updatedAt     DateTime       @updatedAt
+  achievements  Achievement[]  @relation("VerifiedBy")
+  announcements Announcement[]
+  department    Department     @relation(fields: [departmentId], references: [id])
+  school        School         @relation(fields: [schoolId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+
+  @@index([schoolId])
+  @@index([departmentId])
+  @@map("faculty")
+}
+
+model RefreshToken {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  tokenHash  String
+  deviceName String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  family     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  ipAddress String?
+  schoolId  Int?
+  userAgent String?
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([schoolId])
+  @@map("audit_logs")
+}
+
+model Semester {
+  id             Int           @id @default(autoincrement())
+  schoolId       Int
+  semesterNumber Int
+  name           String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  cgpaRecords    CgpaRecord[]
+  school         School        @relation(fields: [schoolId], references: [id])
+  subjectMarks   SubjectMark[]
+
+  @@unique([schoolId, semesterNumber])
+  @@index([schoolId])
+  @@map("semesters")
+}
+
+model Subject {
+  id        Int           @id @default(autoincrement())
+  schoolId  Int
+  code      String
+  name      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  marks     SubjectMark[]
+  school    School        @relation(fields: [schoolId], references: [id])
+
+  @@unique([schoolId, code])
+  @@map("subjects")
+}
+
+model CgpaRecord {
+  id               Int      @id @default(autoincrement())
+  studentId        Int
+  semesterId       Int
+  cgpa             Float
+  classAverageCgpa Float
+  createdAt        DateTime @default(now())
+  semester         Semester @relation(fields: [semesterId], references: [id])
+  student          Student  @relation(fields: [studentId], references: [id])
+
+  @@unique([studentId, semesterId])
+  @@index([studentId])
+  @@index([semesterId])
+  @@map("cgpa_records")
+}
+
+model SubjectMark {
+  id         Int      @id @default(autoincrement())
+  studentId  Int
+  semesterId Int
+  marks      Float
+  createdAt  DateTime @default(now())
+  subjectId  Int
+  semester   Semester @relation(fields: [semesterId], references: [id])
+  student    Student  @relation(fields: [studentId], references: [id])
+  subject    Subject  @relation(fields: [subjectId], references: [id])
+
+  @@index([studentId])
+  @@index([semesterId])
+  @@index([subjectId])
+  @@map("subject_marks")
+}
+
+model Skill {
+  id        Int        @id @default(autoincrement())
+  studentId Int
+  skillName String
+  category  String
+  createdAt DateTime   @default(now())
+  level     SkillLevel
+  student   Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("skills")
+}
+
+model Project {
+  id          Int       @id @default(autoincrement())
+  studentId   Int
+  title       String
+  description String?
+  githubLink  String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+  endDate     DateTime?
+  liveUrl     String?
+  startDate   DateTime?
+  techStack   Json?
+  updatedAt   DateTime  @updatedAt
+  student     Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("projects")
+}
+
+model Achievement {
+  id                  Int               @id @default(autoincrement())
+  studentId           Int
+  verifiedBy          Int?
+  title               String
+  category            String
+  status              AchievementStatus @default(pending)
+  rejectionReason     String?
+  certificateUrl      String?
+  createdAt           DateTime          @default(now())
+  description         String?
+  proofUrl            String?
+  updatedAt           DateTime          @updatedAt
+  verificationComment String?
+  verifiedAt          DateTime?
+  student             Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  faculty             Faculty?          @relation("VerifiedBy", fields: [verifiedBy], references: [id])
+  internship          Internship?
+
+  @@index([studentId])
+  @@index([verifiedBy], map: "achievements_verifiedBy_fkey")
+  @@map("achievements")
+}
+
+model Internship {
+  id             Int          @id @default(autoincrement())
+  studentId      Int
+  achievementId  Int?         @unique
+  companyName    String
+  role           String
+  certificateUrl String?
+  createdAt      DateTime     @default(now())
+  endDate        DateTime?
+  offerLetterUrl String?
+  startDate      DateTime?
+  stipend        Float?
+  updatedAt      DateTime     @updatedAt
+  achievement    Achievement? @relation(fields: [achievementId], references: [id])
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("internships")
+}
+
+model Placement {
+  id             Int      @id @default(autoincrement())
+  studentId      Int
+  companyName    String
+  role           String
+  packageLpa     Float
+  offerLetterUrl String?
+  joined         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  student        Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@map("placements")
+}
+
+model ResumeTemplate {
+  id           Int      @id @default(autoincrement())
+  name         String
+  thumbnailUrl String
+  createdAt    DateTime @default(now())
+  resumes      Resume[]
+
+  @@map("resume_templates")
+}
+
+model Resume {
+  id            Int            @id @default(autoincrement())
+  studentId     Int
+  templateId    Int
+  status        ResumeStatus   @default(draft)
+  includedItems Json
+  pdfUrl        String?
+  createdAt     DateTime       @default(now())
+  isCurrent     Boolean        @default(true)
+  updatedAt     DateTime       @updatedAt
+  version       Int            @default(1)
+  student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  template      ResumeTemplate @relation(fields: [templateId], references: [id])
+
+  @@index([studentId])
+  @@index([templateId], map: "resumes_templateId_fkey")
+  @@map("resumes")
+}
+
+model Notification {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  type      String
+  message   String
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  link      String?
+  readAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+model Announcement {
+  id           Int        @id @default(autoincrement())
+  facultyId    Int
+  departmentId Int
+  title        String
+  content      String
+  createdAt    DateTime   @default(now())
+  expiresAt    DateTime?
+  updatedAt    DateTime   @updatedAt
+  department   Department @relation(fields: [departmentId], references: [id])
+  faculty      Faculty    @relation(fields: [facultyId], references: [id])
+
+  @@index([departmentId])
+  @@index([facultyId], map: "announcements_facultyId_fkey")
+  @@map("announcements")
+}
 
 enum Role {
   student
@@ -37,584 +399,4 @@ enum SkillLevel {
   intermediate
   advanced
   expert
-}
-
-// ── Models ───────────────────────────────────────────────────
-
-// ======================================================
-// SCHOOL
-// ======================================================
-
-model School {
-  id Int @id @default(autoincrement())
-
-  name   String
-  domain String @unique
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  users       User[]
-  departments Department[]
-  students    Student[]
-  faculty     Faculty[]
-  semesters   Semester[]
-  subjects    Subject[]
-
-  @@map("schools")
-}
-
-// ======================================================
-// USER
-// ======================================================
-
-model User {
-  id Int @id @default(autoincrement())
-
-  schoolId Int
-
-  email        String @unique
-  passwordHash String
-
-  role Role
-
-  name String
-
-  profilePhotoUrl String?
-
-  phoneNumber String?
-
-  linkedinUrl String?
-
-  githubUrl String?
-
-  portfolioUrl String?
-
-  bio String?
-
-  emailVerified Boolean @default(false)
-
-  isActive Boolean @default(true)
-
-  lastLoginAt DateTime?
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  school School @relation(fields: [schoolId], references: [id])
-
-  student Student?
-
-  faculty          Faculty?
-  hodOfDepartments Department[]   @relation("DepartmentHod")
-  notifications    Notification[]
-
-  refreshTokens RefreshToken[]
-
-  auditLogs AuditLog[]
-
-  @@index([schoolId])
-  @@map("users")
-}
-
-// ======================================================
-// DEPARTMENT
-// ======================================================
-
-model Department {
-  id Int @id @default(autoincrement())
-
-  schoolId Int
-
-  name String
-
-  hodUserId Int?
-  hod       User? @relation("DepartmentHod", fields: [hodUserId], references: [id])
-
-  school School @relation(fields: [schoolId], references: [id])
-
-  students Student[]
-
-  faculty Faculty[]
-
-  announcements Announcement[]
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  @@unique([schoolId, name])
-  @@index([schoolId])
-  @@map("departments")
-}
-
-// ======================================================
-// STUDENT
-// ======================================================
-
-model Student {
-  id Int @id @default(autoincrement())
-
-  userId Int @unique
-
-  schoolId Int
-
-  departmentId Int
-
-  rollNo String @unique
-
-  branch String
-
-  batchYear Int
-
-  graduationYear Int
-
-  currentSemester Int
-
-  isPlaced Boolean @default(false)
-
-  summary String?
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  user User @relation(fields: [userId], references: [id])
-
-  school School @relation(fields: [schoolId], references: [id])
-
-  department Department @relation(fields: [departmentId], references: [id])
-
-  cgpaRecords CgpaRecord[]
-
-  subjectMarks SubjectMark[]
-
-  skills Skill[]
-
-  projects Project[]
-
-  achievements Achievement[]
-
-  internships Internship[]
-
-  placements Placement[]
-
-  resumes Resume[]
-
-  @@index([schoolId])
-  @@index([departmentId])
-  @@map("students")
-}
-
-// ======================================================
-// FACULTY
-// ======================================================
-
-model Faculty {
-  id Int @id @default(autoincrement())
-
-  userId Int @unique
-
-  schoolId Int
-
-  departmentId Int
-
-  designation String
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  user User @relation(fields: [userId], references: [id])
-
-  school School @relation(fields: [schoolId], references: [id])
-
-  department Department @relation(fields: [departmentId], references: [id])
-
-  achievements Achievement[] @relation("VerifiedBy")
-
-  announcements Announcement[]
-
-  @@index([schoolId])
-  @@index([departmentId])
-  @@map("faculty")
-}
-
-// ======================================================
-// REFRESH TOKENS
-// ======================================================
-
-model RefreshToken {
-  id Int @id @default(autoincrement())
-
-  userId Int
-
-  tokenHash String // SHA-256 hash of the raw token
-  family    String // groups rotated tokens — detects reuse
-
-  deviceName String?
-
-  ipAddress String?
-
-  expiresAt DateTime
-
-  revokedAt DateTime?
-
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("refresh_tokens")
-}
-
-// ======================================================
-// AUDIT LOGS
-// ======================================================
-
-model AuditLog {
-  id        Int      @id @default(autoincrement())
-  userId    Int?
-  schoolId  Int?
-  action    String
-  ipAddress String?
-  userAgent String?
-  metadata  Json?
-  createdAt DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([schoolId])
-  @@map("audit_logs")
-}
-
-model Semester {
-  id Int @id @default(autoincrement())
-
-  schoolId Int
-
-  semesterNumber Int
-
-  name String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  school School @relation(fields: [schoolId], references: [id])
-
-  cgpaRecords CgpaRecord[]
-
-  subjectMarks SubjectMark[]
-
-  @@unique([schoolId, semesterNumber])
-  @@index([schoolId])
-  @@map("semesters")
-}
-
-model Subject {
-  id Int @id @default(autoincrement())
-
-  schoolId Int
-
-  code String
-
-  name String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  marks  SubjectMark[]
-  school School        @relation(fields: [schoolId], references: [id])
-
-  @@unique([schoolId, code])
-  @@map("subjects")
-}
-
-model CgpaRecord {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  semesterId Int
-
-  cgpa Float
-
-  classAverageCgpa Float
-
-  createdAt DateTime @default(now())
-
-  student Student @relation(fields: [studentId], references: [id])
-
-  semester Semester @relation(fields: [semesterId], references: [id])
-
-  @@unique([studentId, semesterId])
-  @@index([studentId])
-  @@index([semesterId])
-  @@map("cgpa_records")
-}
-
-model SubjectMark {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  semesterId Int
-
-  subjectId Int
-
-  marks Float
-
-  createdAt DateTime @default(now())
-
-  student Student @relation(fields: [studentId], references: [id])
-
-  semester Semester @relation(fields: [semesterId], references: [id])
-
-  subject Subject @relation(fields: [subjectId], references: [id])
-
-  @@index([studentId])
-  @@index([semesterId])
-  @@index([subjectId])
-  @@map("subject_marks")
-}
-
-model Skill {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  skillName String
-
-  category String
-
-  level SkillLevel
-
-  createdAt DateTime @default(now())
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId])
-  @@map("skills")
-}
-
-model Project {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  title String
-
-  description String?
-
-  githubLink String?
-
-  liveUrl String?
-
-  techStack Json?
-
-  startDate DateTime?
-
-  endDate DateTime?
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  deletedAt DateTime?
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId])
-  @@map("projects")
-}
-
-model Achievement {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  verifiedBy Int?
-
-  title String
-
-  category String
-
-  description String?
-
-  certificateUrl String?
-
-  proofUrl String?
-
-  status AchievementStatus @default(pending)
-
-  rejectionReason String?
-
-  verificationComment String?
-
-  verifiedAt DateTime?
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  faculty Faculty? @relation("VerifiedBy", fields: [verifiedBy], references: [id])
-
-  internship Internship?
-
-  @@index([studentId])
-  @@map("achievements")
-}
-
-model Internship {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  achievementId Int? @unique
-
-  companyName String
-
-  role String
-
-  stipend Float?
-
-  startDate DateTime?
-
-  endDate DateTime?
-
-  offerLetterUrl String?
-
-  certificateUrl String?
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  achievement Achievement? @relation(fields: [achievementId], references: [id])
-
-  @@index([studentId])
-  @@map("internships")
-}
-
-model Placement {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  companyName String
-
-  role String
-
-  packageLpa Float
-
-  offerLetterUrl String?
-
-  joined Boolean @default(false)
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([studentId])
-  @@map("placements")
-}
-
-model ResumeTemplate {
-  id Int @id @default(autoincrement())
-
-  name String
-
-  thumbnailUrl String
-
-  createdAt DateTime @default(now())
-
-  resumes Resume[]
-
-  @@map("resume_templates")
-}
-
-model Resume {
-  id Int @id @default(autoincrement())
-
-  studentId Int
-
-  templateId Int
-
-  version Int @default(1)
-
-  isCurrent Boolean @default(true)
-
-  status ResumeStatus @default(draft)
-
-  includedItems Json
-
-  pdfUrl String?
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  template ResumeTemplate @relation(fields: [templateId], references: [id])
-
-  @@index([studentId])
-  @@map("resumes")
-}
-
-model Notification {
-  id Int @id @default(autoincrement())
-
-  userId Int
-
-  type String
-
-  message String
-
-  link String?
-
-  isRead Boolean @default(false)
-
-  readAt DateTime?
-
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("notifications")
-}
-
-model Announcement {
-  id Int @id @default(autoincrement())
-
-  facultyId Int
-
-  departmentId Int
-
-  title String
-
-  content String
-
-  expiresAt DateTime?
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  faculty Faculty @relation(fields: [facultyId], references: [id])
-
-  department Department @relation(fields: [departmentId], references: [id])
-
-  @@index([departmentId])
-  @@map("announcements")
 }

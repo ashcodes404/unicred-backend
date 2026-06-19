@@ -1,26 +1,31 @@
 /**
- * AUTH SERVICE — PHASE 2
- * =======================
- * This is the updated version of auth.service.js with these new features:
+ * AUTH SERVICE — PHASE 2 (patched)
+ * ==================================
+ * Changes from the previous version:
  *
- * 1. REFRESH TOKEN ROTATION
- *    Every time the user calls /auth/refresh, the old refresh token is REVOKED
- *    and a brand new one is issued. So each refresh token is single-use only.
+ * 1. REGISTRATION LOCKED DOWN
+ *    register() no longer accepts role or schoolId from the caller.
+ *    - role is hardcoded to "student" — only students self-register.
+ *    - schoolId is derived from the email domain via School.emailDomain lookup.
+ *      If the domain doesn't match any school in the DB, registration is rejected.
+ *    This closes the privilege-escalation hole where anyone could POST
+ *    { role: "admin", schoolId: 1 } and become a full admin of any school.
  *
- * 2. REFRESH TOKEN REUSE DETECTION
- *    If someone tries to use an already-revoked refresh token (meaning it was stolen),
- *    we revoke the ENTIRE token family — logging out ALL devices for that login chain.
+ * 2. ADMIN INVITE FLOW
+ *    New invite() function for admin to create faculty/hod/admin accounts.
+ *    - Requires the calling admin's userId + schoolId (from their verified JWT).
+ *    - Generates a temporary password and logs the event.
+ *    - In production, the temp password would be emailed; here it's returned
+ *      in the response so you can test without an email service wired up.
+ *    - Route: POST /auth/invite (admin-only, behind requireRole("admin"))
  *
- * 3. AUDIT LOGGING
- *    Every important event (login, logout, failed login, token reuse) is recorded
- *    in the AuditLog table for security tracking.
+ * 3. REFRESH CHECKS DEACTIVATION BEFORE REUSE DETECTION
+ *    Previously, deactivating a user + revoking their tokens caused the next
+ *    refresh attempt to be logged as TOKEN_REUSE_DETECTED (a false positive
+ *    security incident). Now refresh() checks isActive/deletedAt first and
+ *    throws a clean "account inactive" error instead.
  *
- * 4. LOGOUT FROM ALL DEVICES
- *    New logoutAll() function that revokes ALL refresh tokens for a user at once.
- *
- * REQUEST FLOW REMINDER:
- * Client → auth.routes.js → auth.controller.js → auth.service.js (this file) → Prisma → Database
- * Response travels back the same way in reverse.
+ * Everything else (rotation, reuse detection, audit logging, logoutAll) is unchanged.
  */
 
 const crypto = require("crypto");
@@ -36,8 +41,7 @@ const { writeAuditLog, AUDIT_EVENTS } = require("../../utils/audit");
 const { REFRESH_TOKEN_EXPIRES_DAYS } = require("../../config/env");
 
 // ─────────────────────────────────────────────
-// HELPER: calculates the expiry date for a new refresh token
-// e.g. if REFRESH_TOKEN_EXPIRES_DAYS = 7, this returns "7 days from now"
+// HELPER: expiry date for a new refresh token
 // ─────────────────────────────────────────────
 function getRefreshTokenExpiry() {
   const expiresAt = new Date();
@@ -46,11 +50,48 @@ function getRefreshTokenExpiry() {
 }
 
 // ─────────────────────────────────────────────
-// REGISTER
-// (No changes from Phase 1 — just added audit logging)
+// HELPER: extract the domain part from an email address
+// e.g. "alice@students.dps.edu" → "students.dps.edu"
 // ─────────────────────────────────────────────
-async function register({ email, password, name, role, schoolId }) {
-  // 1. Check if email is already taken
+function extractEmailDomain(email) {
+  const parts = email.split("@");
+  if (parts.length !== 2 || !parts[1]) {
+    const err = new Error("Invalid email format");
+    err.statusCode = 400;
+    throw err;
+  }
+  return parts[1].toLowerCase();
+}
+
+// ─────────────────────────────────────────────
+// REGISTER — student self-registration only
+//
+// WHO CAN USE THIS: anyone (unauthenticated), but only becomes a student.
+// SCHOOL RESOLUTION: derived from email domain → School.emailDomain in DB.
+//   If no school matches the domain, registration is rejected with 403.
+//   This ensures students can only join schools whose domain matches their email.
+//
+// WHAT CALLERS PROVIDE: { email, password, name }
+// WHAT THIS IGNORES:    role (hardcoded "student"), schoolId (derived from email)
+// ─────────────────────────────────────────────
+async function register({ email, password, name }) {
+  // 1. Derive school from email domain
+  const domain = extractEmailDomain(email);
+
+  const school = await prisma.school.findFirst({
+    where: { domain },   // schema field is "domain", not "emailDomain"
+  });
+
+  if (!school) {
+    // Don't reveal which domains are valid — generic message
+    const err = new Error(
+      "Registration is not available for your email domain. Contact your school admin."
+    );
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // 2. Check if email is already taken
   const existingUser = await prisma.user.findUnique({ where: { email } });
   if (existingUser) {
     const err = new Error("Email already registered");
@@ -58,23 +99,28 @@ async function register({ email, password, name, role, schoolId }) {
     throw err;
   }
 
-  // 2. Hash the password before saving (NEVER store plain text passwords)
+  // 3. Hash the password
   const passwordHash = await hashPassword(password);
 
-  // 3. Create the user in the database
+  // 4. Create the user — role is ALWAYS "student" here, schoolId from domain lookup
   const user = await prisma.user.create({
-    data: { email, passwordHash, name, role, schoolId },
+    data: {
+      email,
+      passwordHash,
+      name,
+      role: "student",        // ← hardcoded, never from client
+      schoolId: school.id,    // ← from DB lookup, never from client
+    },
   });
 
-  // 4. Write audit log — record that a new user registered
+  // 5. Audit log
   await writeAuditLog({
     userId: user.id,
     schoolId: user.schoolId,
     action: AUDIT_EVENTS.REGISTER,
-    metadata: { email, role },
+    metadata: { email, role: "student", resolvedSchoolId: school.id },
   });
 
-  // Return safe fields only (never return passwordHash to the client)
   return {
     id: user.id,
     email: user.email,
@@ -85,16 +131,97 @@ async function register({ email, password, name, role, schoolId }) {
 }
 
 // ─────────────────────────────────────────────
+// INVITE — admin creates faculty/hod/admin accounts
+//
+// WHO CAN USE THIS: admin only (enforced at route level via requireRole("admin"))
+// HOW IT WORKS:
+//   Admin supplies { email, name, role } for the new account.
+//   schoolId is taken from the calling admin's JWT (req.user.schoolId) —
+//   an admin can only create users in their own school.
+//   A temporary password is generated server-side; in production this would
+//   be emailed. For now it's returned in the response so you can test.
+//
+// ALLOWED ROLES: "faculty", "hod", "admin"
+//   (students self-register via register() above — never via invite)
+// ─────────────────────────────────────────────
+async function invite({ email, name, role }, adminUser) {
+  // 1. Validate role — admins cannot invite students (students self-register)
+  const allowedRoles = ["faculty", "hod", "admin"];
+  if (!allowedRoles.includes(role)) {
+    const err = new Error(
+      `Invalid role "${role}". Invite is only for: ${allowedRoles.join(", ")}`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 2. School comes from the admin's JWT — admin cannot create users in other schools
+  const schoolId = adminUser.schoolId;
+
+  // 3. Confirm the school exists (sanity check — schoolId from JWT should always be valid)
+  const school = await prisma.school.findUnique({ where: { id: schoolId } });
+  if (!school) {
+    const err = new Error("Admin's school not found");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  // 4. Check if email is already taken
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+  if (existingUser) {
+    const err = new Error("Email already registered");
+    err.statusCode = 409;
+    throw err;
+  }
+
+  // 5. Generate a temporary password
+  //    In production: email this to the invitee and don't return it in the response.
+  //    For now: returned in the response body for testing.
+  const tempPassword = crypto.randomBytes(12).toString("hex"); // 24-char hex string
+  const passwordHash = await hashPassword(tempPassword);
+
+  // 6. Create the user
+  const user = await prisma.user.create({
+    data: {
+      email,
+      passwordHash,
+      name,
+      role,               // faculty | hod | admin — validated above
+      schoolId,           // from admin's JWT, not from request body
+    },
+  });
+
+  // 7. Audit log — record who invited whom
+  await writeAuditLog({
+    userId: adminUser.userId,
+    schoolId,
+    action: AUDIT_EVENTS.REGISTER,
+    metadata: {
+      invitedBy: adminUser.userId,
+      newUserId: user.id,
+      email,
+      role,
+      note: "Created via admin invite",
+    },
+  });
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    schoolId: user.schoolId,
+    // TODO: remove tempPassword from response once email sending is wired up
+    tempPassword,
+  };
+}
+
+// ─────────────────────────────────────────────
 // LOGIN
-// (Added audit logging for both success and failure)
 // ─────────────────────────────────────────────
 async function login({ email, password }, deviceInfo = {}) {
-  // 1. Find the user by email
   const user = await prisma.user.findUnique({ where: { email } });
 
-  // 2. If user not found, log the failed attempt and throw error
-  //    NOTE: We say "Invalid email or password" (not "email not found")
-  //    so attackers can't discover which emails are registered
   if (!user) {
     await writeAuditLog({
       action: AUDIT_EVENTS.LOGIN_FAILED,
@@ -107,19 +234,15 @@ async function login({ email, password }, deviceInfo = {}) {
     throw err;
   }
 
-  // 3. Check account is active and not deleted
   if (!user.isActive || user.deletedAt) {
     const err = new Error("This account is inactive");
     err.statusCode = 403;
     throw err;
   }
 
-  // 4. Compare the provided password against the stored hash
-  //    bcrypt.compare() does this safely — it's slow by design to prevent brute force
   const passwordMatches = await comparePassword(password, user.passwordHash);
 
   if (!passwordMatches) {
-    // Log the failed attempt with which user tried (for admin review)
     await writeAuditLog({
       userId: user.id,
       schoolId: user.schoolId,
@@ -133,25 +256,16 @@ async function login({ email, password }, deviceInfo = {}) {
     throw err;
   }
 
-  // 5. Generate the access token
-  //    This is a short-lived JWT (15 min) stored in frontend memory
-  //    It contains userId, role, schoolId for quick access on protected routes
   const accessToken = signAccessToken({
     userId: user.id,
     role: user.role,
     schoolId: user.schoolId,
   });
 
-  // 6. Generate a new refresh token (long-lived, random, single-use)
-  //    rawRefreshToken → sent to client as httpOnly cookie
-  //    tokenHash       → stored in database (never the raw value)
-  //    tokenFamily     → groups all tokens from this login chain together
-  //                      (used to revoke all at once if theft is detected)
   const rawRefreshToken = generateRefreshToken();
   const tokenHash = hashRefreshToken(rawRefreshToken);
-  const tokenFamily = crypto.randomUUID(); // new family for each new login
+  const tokenFamily = crypto.randomUUID();
 
-  // 7. Store the hashed refresh token in the database
   await prisma.refreshToken.create({
     data: {
       userId: user.id,
@@ -163,13 +277,11 @@ async function login({ email, password }, deviceInfo = {}) {
     },
   });
 
-  // 8. Update the user's last login timestamp
   await prisma.user.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date() },
   });
 
-  // 9. Write audit log for successful login
   await writeAuditLog({
     userId: user.id,
     schoolId: user.schoolId,
@@ -180,7 +292,7 @@ async function login({ email, password }, deviceInfo = {}) {
 
   return {
     accessToken,
-    refreshToken: rawRefreshToken, // raw token → goes to client as httpOnly cookie
+    refreshToken: rawRefreshToken,
     user: {
       id: user.id,
       email: user.email,
@@ -192,61 +304,56 @@ async function login({ email, password }, deviceInfo = {}) {
 }
 
 // ─────────────────────────────────────────────
-// REFRESH — with ROTATION + REUSE DETECTION
+// REFRESH — rotation + reuse detection
 //
-// HOW ROTATION WORKS:
-//   Client sends refresh token cookie → we look it up in DB →
-//   revoke the old one → issue a brand new refresh token + new access token →
-//   send both back to client
-//
-// HOW REUSE DETECTION WORKS:
-//   If someone tries to use a refresh token that was ALREADY revoked (revokedAt is set),
-//   it means either:
-//     a) The token was stolen and the attacker is using the old one after we rotated it
-//     b) The legitimate user is replaying an old token (shouldn't happen normally)
-//   In either case → revoke the ENTIRE family (all active sessions from this chain)
-//   This forces the user (and any attacker) to log in again from scratch.
+// FIX vs previous version:
+//   Now checks isActive/deletedAt BEFORE the revokedAt reuse-detection check.
+//   Previously, deactivating a user (which revokes all their tokens) would cause
+//   their next refresh attempt to log TOKEN_REUSE_DETECTED — a misleading false
+//   positive in the security audit log.
+//   Now it logs a clean "account inactive" 403 instead.
 // ─────────────────────────────────────────────
 async function refresh(rawRefreshToken, deviceInfo = {}) {
-  // 1. Make sure a token was actually sent
   if (!rawRefreshToken) {
     const err = new Error("No refresh token provided");
     err.statusCode = 401;
     throw err;
   }
 
-  // 2. Hash the incoming token so we can look it up in the DB
-  //    (remember: we only stored the hash, never the raw token)
   const tokenHash = hashRefreshToken(rawRefreshToken);
 
-  // 3. Find the token in the database, along with its owner (user)
   const storedToken = await prisma.refreshToken.findFirst({
     where: { tokenHash },
-    include: { user: true }, // join with User table so we have user.role, user.schoolId etc.
+    include: { user: true },
   });
 
-  // 4. Token doesn't exist at all → invalid/tampered token
   if (!storedToken) {
     const err = new Error("Invalid refresh token");
     err.statusCode = 401;
     throw err;
   }
 
-  // 5. 🚨 REUSE DETECTION
-  //    If revokedAt is set, this token was already used once and rotated.
-  //    Someone is trying to reuse it — this is a sign of token theft.
+  // ─── DEACTIVATION CHECK (before reuse detection) ───
+  // If the account was deactivated after this token was issued, reject cleanly.
+  // This prevents a false TOKEN_REUSE_DETECTED audit event when an admin
+  // deactivates a user (which revokes all their tokens via revokeAllRefreshTokens).
+  if (!storedToken.user.isActive || storedToken.user.deletedAt) {
+    const err = new Error("This account is inactive. Please contact your administrator.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // ─── REUSE DETECTION ───
+  // revokedAt being set on a non-deactivated account means token theft.
   if (storedToken.revokedAt) {
-    // NUCLEAR OPTION: revoke ALL tokens in this family
-    // This logs out every device that was using this login chain
     await prisma.refreshToken.updateMany({
       where: {
-        family: storedToken.family, // same login chain
-        revokedAt: null,            // only revoke ones still active
+        family: storedToken.family,
+        revokedAt: null,
       },
       data: { revokedAt: new Date() },
     });
 
-    // Write a high-priority security audit log
     await writeAuditLog({
       userId: storedToken.userId,
       schoolId: storedToken.user.schoolId,
@@ -266,37 +373,27 @@ async function refresh(rawRefreshToken, deviceInfo = {}) {
     throw err;
   }
 
-  // 6. Token is expired (past its expiry date)
+  // ─── EXPIRY CHECK ───
   if (storedToken.expiresAt < new Date()) {
     const err = new Error("Refresh token has expired. Please log in again.");
     err.statusCode = 401;
     throw err;
   }
 
-  // ─── TOKEN IS VALID — NOW ROTATE ───
+  // ─── TOKEN IS VALID — ROTATE ───
 
-// 7. Attempt to revoke ONLY if it has not already been revoked
-const revokeResult = await prisma.refreshToken.updateMany({
-  where: {
-    id: storedToken.id,
-    revokedAt: null,
-  },
-  data: {
-    revokedAt: new Date(),
-  },
-});
+  // Atomic revoke — guards against concurrent requests racing on the same token
+  const revokeResult = await prisma.refreshToken.updateMany({
+    where: { id: storedToken.id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
 
-// Another request already used this token first
-if (revokeResult.count !== 1) {
-  const err = new Error(
-    "Refresh token has already been used. Please log in again."
-  );
-  err.statusCode = 401;
-  throw err;
-}
+  if (revokeResult.count !== 1) {
+    const err = new Error("Refresh token has already been used. Please log in again.");
+    err.statusCode = 401;
+    throw err;
+  }
 
-  // 8. Generate a brand new refresh token
-  //    IMPORTANT: same family as the old one (so we can revoke all together if needed)
   const newRawRefreshToken = generateRefreshToken();
   const newTokenHash = hashRefreshToken(newRawRefreshToken);
 
@@ -304,22 +401,19 @@ if (revokeResult.count !== 1) {
     data: {
       userId: storedToken.userId,
       tokenHash: newTokenHash,
-      family: storedToken.family, // same family as the original login
+      family: storedToken.family,
       deviceName: storedToken.deviceName,
       ipAddress: deviceInfo.ipAddress || storedToken.ipAddress,
       expiresAt: getRefreshTokenExpiry(),
     },
   });
 
-  // 9. Issue a new access token with fresh user data
-  //    (in case role or schoolId changed since last login)
   const newAccessToken = signAccessToken({
     userId: storedToken.user.id,
     role: storedToken.user.role,
     schoolId: storedToken.user.schoolId,
   });
 
-  // 10. Write audit log
   await writeAuditLog({
     userId: storedToken.userId,
     schoolId: storedToken.user.schoolId,
@@ -330,34 +424,29 @@ if (revokeResult.count !== 1) {
 
   return {
     accessToken: newAccessToken,
-    refreshToken: newRawRefreshToken, // new token → replaces the old cookie on the client
+    refreshToken: newRawRefreshToken,
   };
 }
 
 // ─────────────────────────────────────────────
 // LOGOUT (single device)
-// Revokes only the current refresh token (the one in the cookie)
-// Other devices stay logged in
 // ─────────────────────────────────────────────
 async function logout(rawRefreshToken, deviceInfo = {}) {
   if (!rawRefreshToken) return;
 
   const tokenHash = hashRefreshToken(rawRefreshToken);
 
-  // Find the token first so we can get userId for the audit log
   const storedToken = await prisma.refreshToken.findFirst({
     where: { tokenHash },
   });
 
-  if (!storedToken) return; // token already gone, nothing to do
+  if (!storedToken) return;
 
-  // Revoke (mark as used — don't delete, keep for audit history)
   await prisma.refreshToken.update({
     where: { id: storedToken.id },
     data: { revokedAt: new Date() },
   });
 
-  // Write audit log
   await writeAuditLog({
     userId: storedToken.userId,
     action: AUDIT_EVENTS.LOGOUT,
@@ -368,25 +457,13 @@ async function logout(rawRefreshToken, deviceInfo = {}) {
 
 // ─────────────────────────────────────────────
 // LOGOUT ALL DEVICES
-// Revokes ALL active refresh tokens for this user at once.
-// Use case: "Sign out from all devices" button, or after a password change.
-//
-// HOW IT KNOWS WHICH USER:
-// The userId comes from req.user (the verified access token in auth.middleware.js)
-// So the user must be logged in (have a valid access token) to call this.
 // ─────────────────────────────────────────────
 async function logoutAll(userId, deviceInfo = {}) {
-  // Revoke ALL active refresh tokens for this user
-  // (active = revokedAt is null, meaning not yet revoked)
   await prisma.refreshToken.updateMany({
-    where: {
-      userId,
-      revokedAt: null, // only target active tokens
-    },
+    where: { userId, revokedAt: null },
     data: { revokedAt: new Date() },
   });
 
-  // Write audit log
   await writeAuditLog({
     userId,
     action: AUDIT_EVENTS.LOGOUT_ALL,
@@ -398,6 +475,7 @@ async function logoutAll(userId, deviceInfo = {}) {
 
 module.exports = {
   register,
+  invite,
   login,
   refresh,
   logout,

@@ -1,27 +1,20 @@
 /**
- * AUTH ROUTES — PHASE 2
- * ======================
- * Updated version of auth.routes.js.
+ * AUTH ROUTES — PHASE 2 (patched)
+ * =================================
+ * Both auth.middleware.js and role.middleware.js use default exports,
+ * so they're imported directly (not destructured).
  *
- * What's new in Phase 2:
- *   1. Rate limiters applied to login and refresh routes
- *   2. New POST /logout-all route (protected — requires valid access token)
+ * PUBLIC:
+ *   POST /register   → student self-registration (school resolved from email domain)
+ *   POST /login      → returns access token + sets refresh cookie
+ *   POST /refresh    → rotates refresh token, returns new access token
+ *   POST /logout     → revokes current device's refresh token
  *
- * HOW MIDDLEWARE CHAINS WORK ON A ROUTE:
- * When you write: router.post("/login", loginRateLimiter, loginHandler)
- * Express runs them LEFT TO RIGHT:
- *   1. loginRateLimiter → checks if this IP has exceeded the limit
- *      - If limit exceeded: sends 429 response and STOPS here
- *      - If ok: calls next() and moves to loginHandler
- *   2. loginHandler → processes the login request
+ * ADMIN-ONLY:
+ *   POST /invite     → admin creates a faculty/hod/admin account
  *
- * For the protected /logout-all route:
- *   1. loginRateLimiter (rate check)
- *   2. authenticate (verifies JWT, attaches req.user) → if invalid: sends 401 and STOPS
- *   3. logoutAllHandler → does the actual logout
- *
- * All routes are mounted under /auth in routes/index.js
- * Final URLs: /api/auth/register, /api/auth/login, etc.
+ * AUTHENTICATED (any role):
+ *   POST /logout-all → revokes all refresh tokens for this user
  */
 
 const express = require("express");
@@ -29,6 +22,7 @@ const router = express.Router();
 
 const {
   registerHandler,
+  inviteHandler,
   loginHandler,
   refreshHandler,
   logoutHandler,
@@ -37,34 +31,25 @@ const {
 
 const { loginRateLimiter, refreshRateLimiter } = require("../../middleware/rateLimit.middleware");
 
-// authenticate middleware is needed for the logout-all route
-// (user must have a valid access token to prove who they are)
+// Default exports — no destructuring
 const authenticate = require("../../middleware/auth.middleware");
+const requireRole  = require("../../middleware/role.middleware");
 
-// ── PUBLIC ROUTES (no access token needed) ──
+// ── PUBLIC ROUTES ─────────────────────────────────────────────────────────────
 
-// POST /api/auth/register
-// No rate limiter here — but you could add one if you want to prevent spam registrations
 router.post("/register", registerHandler);
+router.post("/login",    loginRateLimiter,   loginHandler);
+router.post("/refresh",  refreshRateLimiter, refreshHandler);
+router.post("/logout",   logoutHandler);
 
-// POST /api/auth/login
-// loginRateLimiter → max 5 attempts per IP per 15 minutes
-router.post("/login", loginRateLimiter, loginHandler);
+// ── ADMIN-ONLY ────────────────────────────────────────────────────────────────
 
-// POST /api/auth/refresh
-// refreshRateLimiter → max 20 attempts per IP per 15 minutes
-// No access token needed here — the refresh token cookie IS the auth
-router.post("/refresh", refreshRateLimiter, refreshHandler);
+// schoolId comes from admin's JWT (req.user.schoolId) — never from body
+// Body: { email, name, role }  where role ∈ { "faculty", "hod", "admin" }
+router.post("/invite", authenticate, requireRole("admin"), inviteHandler);
 
-// POST /api/auth/logout
-// No rate limiter needed — logout is harmless to spam
-router.post("/logout", logoutHandler);
+// ── AUTHENTICATED (any role) ──────────────────────────────────────────────────
 
-// ── PROTECTED ROUTE (access token required) ──
-
-// POST /api/auth/logout-all
-// authenticate runs first → verifies JWT → attaches req.user
-// then logoutAllHandler uses req.user.userId to revoke all sessions
 router.post("/logout-all", authenticate, logoutAllHandler);
 
 module.exports = router;

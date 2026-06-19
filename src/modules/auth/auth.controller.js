@@ -1,26 +1,20 @@
 /**
- * AUTH CONTROLLER — PHASE 2
- * ==========================
- * Updated version of auth.controller.js.
+ * AUTH CONTROLLER — PHASE 2 (patched)
+ * =====================================
+ * Changes from previous version:
  *
- * What's new in Phase 2:
- *   1. deviceInfo is now passed to service functions (for audit logging)
- *   2. refreshHandler now sends back a NEW refresh token cookie (rotation)
- *   3. New logoutAllHandler added
+ * 1. registerHandler — no longer reads role or schoolId from req.body.
+ *    Only accepts: email, password, name.
+ *    School is resolved inside authService.register() via email domain.
+ *    Role is hardcoded to "student" in the service.
  *
- * ROLE OF THE CONTROLLER:
- * The controller sits between the route and the service.
- *   - Route defines the URL and middleware chain
- *   - Controller extracts data from req (body, cookies, headers, ip)
- *   - Service does the actual business logic
- *   - Controller sends the response back
+ * 2. inviteHandler — new handler for POST /auth/invite (admin-only route).
+ *    Accepts: email, name, role (faculty | hod | admin).
+ *    schoolId is taken from req.user (the admin's verified JWT) — never from body.
+ *    Returns the new user record + tempPassword (for testing; remove once email is wired).
  *
- * REQUEST FLOW:
- * POST /api/auth/login
- *   → auth.routes.js (applies rate limiter middleware)
- *   → loginHandler (this file) extracts email, password, deviceInfo from req
- *   → authService.login() does the work
- *   → loginHandler sends back { accessToken, user } + sets cookie
+ * Everything else (loginHandler, refreshHandler, logoutHandler, logoutAllHandler)
+ * is unchanged from the previous version.
  */
 
 const authService = require("./auth.service");
@@ -28,14 +22,7 @@ const { success, error } = require("../../utils/apiResponse");
 const { REFRESH_TOKEN_EXPIRES_DAYS } = require("../../config/env");
 
 /**
- * HELPER: extracts device info from the request.
- * Used for audit logging — tells us which device/IP made the request.
- *
- * req.ip       → the IP address of the client (e.g. "192.168.1.1")
- * req.headers["user-agent"] → browser/client info (e.g. "PostmanRuntime/7.x" or "Mozilla/5.0...")
- *
- * @param {Object} req - Express request object
- * @returns {{ ipAddress: string, deviceName: string }}
+ * Extracts device info from the request for audit logging.
  */
 function extractDeviceInfo(req) {
   return {
@@ -45,15 +32,10 @@ function extractDeviceInfo(req) {
 }
 
 /**
- * HELPER: sets the refresh token as a secure httpOnly cookie.
- *
- * httpOnly: true  → JavaScript on the page CANNOT read this cookie (protects from XSS attacks)
- * secure: true    → cookie only sent over HTTPS (set to true in production)
- * sameSite: strict → browser won't send this cookie on cross-site requests (protects from CSRF)
- * maxAge          → how long the cookie lives in the browser (in milliseconds)
- *
- * @param {Object} res - Express response object
- * @param {string} token - raw refresh token to store in cookie
+ * Sets the refresh token as a secure httpOnly cookie.
+ *   httpOnly  → JS on the page cannot read it (XSS protection)
+ *   secure    → HTTPS only in production
+ *   sameSite  → not sent on cross-site requests (CSRF protection)
  */
 function setRefreshTokenCookie(res, token) {
   const maxAgeMs = (REFRESH_TOKEN_EXPIRES_DAYS || 7) * 24 * 60 * 60 * 1000;
@@ -68,18 +50,55 @@ function setRefreshTokenCookie(res, token) {
 
 // ─────────────────────────────────────────────
 // POST /api/auth/register
+//
+// Open endpoint — no auth required.
+// Creates a student account. School is inferred from email domain.
+// role and schoolId are NOT accepted from the client.
 // ─────────────────────────────────────────────
 async function registerHandler(req, res, next) {
   try {
-    const { email, password, name, role, schoolId } = req.body;
+    const { email, password, name } = req.body;
 
-    if (!email || !password || !name || !role || !schoolId) {
-      return error(res, 400, "email, password, name, role, and schoolId are required");
+    // Only these three fields — role and schoolId are intentionally excluded
+    if (!email || !password || !name) {
+      return error(res, 400, "email, password, and name are required");
     }
 
-    const user = await authService.register({ email, password, name, role, schoolId });
+    const user = await authService.register({ email, password, name });
 
-    return success(res, 201, "User registered successfully", { user });
+    return success(res, 201, "Student account created successfully", { user });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─────────────────────────────────────────────
+// POST /api/auth/invite
+//
+// Admin-only — requires valid access token + role "admin".
+// Wired in auth.routes.js behind: authMiddleware, requireRole("admin")
+//
+// Body: { email, name, role }   (role must be: faculty | hod | admin)
+// schoolId is NOT read from the body — it comes from req.user (admin's JWT).
+//
+// Returns the new user + a temporary password.
+// TODO: once email is wired up, send tempPassword by email and remove it from the response.
+// ─────────────────────────────────────────────
+async function inviteHandler(req, res, next) {
+  try {
+    const { email, name, role } = req.body;
+
+    if (!email || !name || !role) {
+      return error(res, 400, "email, name, and role are required");
+    }
+
+    // req.user is set by auth.middleware.js — contains userId, role, schoolId from JWT.
+    // schoolId here is the admin's school; the service enforces the invite happens within it.
+    const adminUser = req.user;
+
+    const result = await authService.invite({ email, name, role }, adminUser);
+
+    return success(res, 201, "User invited successfully", { user: result });
   } catch (err) {
     next(err);
   }
@@ -96,7 +115,6 @@ async function loginHandler(req, res, next) {
       return error(res, 400, "email and password are required");
     }
 
-    // Extract device info for audit logging
     const deviceInfo = extractDeviceInfo(req);
 
     const { accessToken, refreshToken, user } = await authService.login(
@@ -104,10 +122,8 @@ async function loginHandler(req, res, next) {
       deviceInfo
     );
 
-    // Send refresh token as httpOnly cookie (JS can't read it)
     setRefreshTokenCookie(res, refreshToken);
 
-    // Send access token in body (frontend stores in memory, NOT localStorage)
     return success(res, 200, "Login successful", { accessToken, user });
   } catch (err) {
     next(err);
@@ -116,14 +132,9 @@ async function loginHandler(req, res, next) {
 
 // ─────────────────────────────────────────────
 // POST /api/auth/refresh
-// Client sends the refresh token cookie → we validate, rotate, and return:
-//   - New access token (in response body)
-//   - New refresh token (as a new httpOnly cookie, replacing the old one)
 // ─────────────────────────────────────────────
 async function refreshHandler(req, res, next) {
   try {
-    // The refresh token comes from the cookie (automatically sent by browser)
-    // req.cookies is available because we have cookieParser() in app.js
     const rawRefreshToken = req.cookies?.refreshToken;
     const deviceInfo = extractDeviceInfo(req);
 
@@ -132,8 +143,6 @@ async function refreshHandler(req, res, next) {
       deviceInfo
     );
 
-    // Set the NEW refresh token cookie (replaces the old one)
-    // This is the "rotation" part — old token is gone, new one takes its place
     setRefreshTokenCookie(res, newRefreshToken);
 
     return success(res, 200, "Token refreshed", { accessToken });
@@ -144,7 +153,6 @@ async function refreshHandler(req, res, next) {
 
 // ─────────────────────────────────────────────
 // POST /api/auth/logout
-// Logs out from the current device only.
 // ─────────────────────────────────────────────
 async function logoutHandler(req, res, next) {
   try {
@@ -153,7 +161,6 @@ async function logoutHandler(req, res, next) {
 
     await authService.logout(rawRefreshToken, deviceInfo);
 
-    // Clear the cookie from the browser
     res.clearCookie("refreshToken");
 
     return success(res, 200, "Logged out successfully");
@@ -164,21 +171,15 @@ async function logoutHandler(req, res, next) {
 
 // ─────────────────────────────────────────────
 // POST /api/auth/logout-all
-// Logs out from ALL devices at once.
-//
-// This route requires the user to be authenticated (valid access token)
-// because we need req.user.userId to know WHICH user to log out everywhere.
-// auth.middleware.js runs first and attaches req.user before this handler runs.
+// Requires valid access token (auth.middleware.js runs first).
 // ─────────────────────────────────────────────
 async function logoutAllHandler(req, res, next) {
   try {
-    // req.user is set by auth.middleware.js after verifying the access token
     const userId = req.user.userId;
     const deviceInfo = extractDeviceInfo(req);
 
     await authService.logoutAll(userId, deviceInfo);
 
-    // Also clear the current device's cookie
     res.clearCookie("refreshToken");
 
     return success(res, 200, "Logged out from all devices successfully");
@@ -189,6 +190,7 @@ async function logoutAllHandler(req, res, next) {
 
 module.exports = {
   registerHandler,
+  inviteHandler,
   loginHandler,
   refreshHandler,
   logoutHandler,
