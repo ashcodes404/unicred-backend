@@ -27,24 +27,57 @@ const {
   refreshHandler,
   logoutHandler,
   logoutAllHandler,
-  verifyOtp, 
+  verifyOtp,
   resendOtp,
+  forgotPassword,
+  resetPassword,
+  verifyResetOtp,
 } = require("./auth.controller");
 
-const { loginRateLimiter, refreshRateLimiter } = require("../../middleware/rateLimit.middleware");
+const {
+  loginRateLimiter,
+  refreshRateLimiter,
+  otpRateLimiter
+} = require("../../middleware/rateLimit.middleware");
 
 // Default exports — no destructuring
 const authenticate = require("../../middleware/auth.middleware");
-const requireRole  = require("../../middleware/role.middleware");
+const requireRole = require("../../middleware/role.middleware");
 
 // ── PUBLIC ROUTES ─────────────────────────────────────────────────────────────
 
 router.post("/register", registerHandler);
-router.post("/login",    loginRateLimiter,   loginHandler);
-router.post("/refresh",  refreshRateLimiter, refreshHandler);
-router.post("/logout",   logoutHandler);
+router.post("/login", loginRateLimiter, loginHandler);
+router.post("/refresh", refreshRateLimiter, refreshHandler);
+router.post("/logout", logoutHandler);
 router.post("/verify-otp", verifyOtp);
 router.post("/resend-otp", resendOtp);
+
+/**
+ * ----------------------------------------------------
+ * PASSWORD RESET ROUTES
+ * ----------------------------------------------------
+ *
+ * Public Routes
+ *
+ * User may not be logged in when
+ * resetting password.
+ */
+
+router.post("/forgot-password", otpRateLimiter, forgotPassword);
+
+router.post("/reset-password", otpRateLimiter, resetPassword);
+
+/**
+ * ----------------------------------------------------
+ * VERIFY PASSWORD RESET OTP
+ * ----------------------------------------------------
+ *
+ * Used before showing
+ * new password form.
+ */
+
+router.post("/verify-reset-otp", otpRateLimiter, verifyResetOtp);
 
 // ── ADMIN-ONLY ────────────────────────────────────────────────────────────────
 

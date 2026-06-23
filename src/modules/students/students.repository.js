@@ -321,6 +321,169 @@ async function findStudentDepartment(
 }
 
 
+/**
+ * =====================================================
+ * RESULT QUERIES
+ * =====================================================
+ *
+ * These repository functions are responsible for
+ * fetching academic results for students.
+ *
+ * IMPORTANT BUSINESS RULES:
+ *
+ * Students must ONLY see:
+ *
+ * 1. Published results
+ * 2. Active (non-invalidated) results
+ *
+ * Students must NEVER see:
+ *
+ * - Draft results
+ * - Under review results
+ * - Frozen results
+ * - Invalidated results
+ *
+ * Why invalidated?
+ *
+ * Example:
+ *
+ * Subject: DBMS
+ *
+ * Attempt #1:
+ * Marks = 32 (FAIL)
+ *
+ * Reappear Approved
+ *
+ * Attempt #1 becomes invalidated
+ *
+ * Attempt #2:
+ * Marks = 68
+ *
+ * Student should only see
+ * the active result.
+ */
+
+
+/**
+ * Get all ACTIVE and PUBLISHED subject marks
+ * for a student.
+ *
+ * This function is used by:
+ *
+ * GET /students/results
+ *
+ * Multi-tenancy:
+ * - schoolId enforced
+ *
+ * Visibility:
+ * - publication status MUST be published
+ *
+ * Reappear:
+ * - invalidated marks are hidden
+ */
+async function findSubjectMarksByStudentId(
+  studentId,
+  schoolId
+) {
+  return prisma.subjectMark.findMany({
+    where: {
+      studentId,
+      schoolId,
+
+      /**
+       * Only active marks.
+       *
+       * If a student gives a reappear exam,
+       * old marks become invalidated.
+       */
+      invalidatedAt: null,
+
+      /**
+       * Only published results
+       * are visible to students.
+       */
+      publication: {
+        status: "PUBLISHED",
+      },
+    },
+
+    include: {
+      /**
+       * Subject information.
+       *
+       * Needed by frontend:
+       *
+       * DBMS
+       * Operating Systems
+       * CN
+       */
+      subject: {
+        select: {
+          id: true,
+          name: true,
+          courseCode: true,
+          passingMarks: true,
+          totalMarks: true,
+        },
+      },
+
+      /**
+       * Publication metadata.
+       *
+       * Needed for:
+       *
+       * Session
+       * Semester
+       * Batch
+       */
+      publication: {
+        select: {
+          id: true,
+          sessionId: true,
+          semesterNumber: true,
+          batchYear: true,
+          publishedAt: true,
+        },
+      },
+    },
+
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+}
+
+/**
+ * Lightweight result query.
+ *
+ * Used internally by services that only need
+ * marks data.
+ *
+ * Faster than loading subject/publication relations.
+ */
+async function findActiveMarksForCgpa(
+  studentId,
+  schoolId
+) {
+  return prisma.subjectMark.findMany({
+    where: {
+      studentId,
+      schoolId,
+      invalidatedAt: null,
+
+      publication: {
+        status: "PUBLISHED",
+      },
+    },
+
+    select: {
+      id: true,
+      marksObtained: true,
+      subjectId: true,
+    },
+  });
+}
+
 
 module.exports = {
   findAllBySchool,
@@ -334,4 +497,8 @@ module.exports = {
   findBySchoolAndRollNo,
   findStudentWithDepartment,
   findStudentDepartment,
+
+  // Result Queries
+  findSubjectMarksByStudentId,
+  findActiveMarksForCgpa,
 };

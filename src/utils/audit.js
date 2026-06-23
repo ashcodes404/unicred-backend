@@ -31,13 +31,15 @@ const prisma = require("../config/db");
  */
 const AUDIT_EVENTS = {
   // Auth events
-  LOGIN_SUCCESS: "LOGIN_SUCCESS",           // user logged in successfully
-  LOGIN_FAILED: "LOGIN_FAILED",             // wrong email or password
-  LOGOUT: "LOGOUT",                         // user logged out
-  LOGOUT_ALL: "LOGOUT_ALL",                 // user logged out from all devices
-  TOKEN_REFRESHED: "TOKEN_REFRESHED",       // access token was refreshed using refresh token
+  LOGIN_SUCCESS: "LOGIN_SUCCESS", // user logged in successfully
+  LOGIN_FAILED: "LOGIN_FAILED", // wrong email or password
+  LOGOUT: "LOGOUT", // user logged out
+  LOGOUT_ALL: "LOGOUT_ALL", // user logged out from all devices
+  TOKEN_REFRESHED: "TOKEN_REFRESHED", // access token was refreshed using refresh token
   TOKEN_REUSE_DETECTED: "TOKEN_REUSE_DETECTED", // 🚨 a stolen/already-used token was detected
-  REGISTER: "REGISTER",                     // new user registered
+  REGISTER: "REGISTER", // new user registered
+  PASSWORD_RESET_REQUESTED: "PASSWORD_RESET_REQUESTED",
+  PASSWORD_RESET_SUCCESS: "PASSWORD_RESET_SUCCESS",
 };
 
 /**

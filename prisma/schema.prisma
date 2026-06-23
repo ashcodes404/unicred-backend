@@ -47,10 +47,10 @@ model User {
   hodOfDepartments Department[]      @relation("DepartmentHod")
   faculty          Faculty?
   notifications    Notification[]
+  otpVerifications OtpVerification[]
   refreshTokens    RefreshToken[]
   student          Student?
   school           School            @relation(fields: [schoolId], references: [id])
-  otpVerifications OtpVerification[]
 
   @@index([schoolId])
   @@map("users")
@@ -153,10 +153,8 @@ model OtpVerification {
   otpType   OtpType
   expiresAt DateTime
   usedAt    DateTime?
-
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([email])

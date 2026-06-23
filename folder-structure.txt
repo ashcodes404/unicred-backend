@@ -69,9 +69,13 @@ unicred-backend
 │   │   │   └── 32be86d078cde496cb765bd657125374d7d525
 │   │   ├── 31
 │   │   │   └── 363be61759eb993b3be4be1dc3e9b8fca3573f
+│   │   ├── 32
+│   │   │   └── 9ecd7d392dc903c9c176c49f2a29e5db825ae7
 │   │   ├── 34
 │   │   │   ├── 196a93f8c0b3a0a01313f4e26a60821bc340fd
 │   │   │   └── 42ecac18a2375a62694d1071bc358268768b71
+│   │   ├── 38
+│   │   │   └── 665fc3cd732d5e715e43192f173a196af7718a
 │   │   ├── 3b
 │   │   │   └── 175bcf846331557bf9012c8510229943e813ce
 │   │   ├── 3f
@@ -81,6 +85,10 @@ unicred-backend
 │   │   │   └── f701e72d23db622b4f668ac3a90bb19cf68051
 │   │   ├── 42
 │   │   │   └── 93f85265a8ed1eab9108b32a3c2d0dd13f7692
+│   │   ├── 4a
+│   │   │   └── 404ae93a9f9d0ddde2e3d2b068fc2bc9a802bb
+│   │   ├── 4b
+│   │   │   └── 79e5d9372ad1ce2db2413f35ec06c7ed0e91b3
 │   │   ├── 50
 │   │   │   └── 432ffea0dc0cb4a4db78f3b21a2de5aa3af0a9
 │   │   ├── 54
@@ -89,6 +97,8 @@ unicred-backend
 │   │   │   └── 28c7238fae635478a73888dff2069e7e08eb7a
 │   │   ├── 58
 │   │   │   └── d03a040bd3feda0d2c2b72da0770b0670f1c8c
+│   │   ├── 59
+│   │   │   └── ac8f5876369837c36aafcae533dd33dc4ebc9e
 │   │   ├── 5c
 │   │   │   └── 1378cdb5bf1506f37cabaabac72e9108f09ef3
 │   │   ├── 5f
@@ -98,6 +108,7 @@ unicred-backend
 │   │   │   ├── 730c8f5bbe397953462e9ab3157b231291a713
 │   │   │   └── eec25bb8b7352e575f77cfaff76849b9677211
 │   │   ├── 61
+│   │   │   ├── 25aabba2beb0d4a5ad930203ad964958158c0c
 │   │   │   └── a7e624c38bba9b961032e7d5579f4efc15684c
 │   │   ├── 62
 │   │   │   └── d16b0d52c8cb62275002fba60187b8287265d6
@@ -121,40 +132,57 @@ unicred-backend
 │   │   │   └── e8c1eb439b03a3c578fa3f9c87824afe97328f
 │   │   ├── 7f
 │   │   │   └── ac5b1b74e583c39ef37e28ee5f140cb68a643b
+│   │   ├── 81
+│   │   │   └── fab634c43550c842508ba1d13470dc1482e4cd
 │   │   ├── 82
 │   │   │   └── 7ec0d87364778c0298e94fb8a0bd9707c4c1e4
 │   │   ├── 84
 │   │   │   └── 021054a82c4e295bd3b134e1dab798d9b1c235
 │   │   ├── 85
-│   │   │   └── 4f672ae0f8179c11deb67055f33871763349ef
+│   │   │   ├── 4f672ae0f8179c11deb67055f33871763349ef
+│   │   │   └── ff264ad7b6982ff4eb01a1edeeb224f716b289
 │   │   ├── 87
 │   │   │   └── 5577c2b4e73f9e9940b132bad80725f63ee992
 │   │   ├── 8b
 │   │   │   └── 3a7ba019d0d6178750ad81719b232d44460afb
 │   │   ├── 8c
 │   │   │   └── f39027eb4d926ed7ed91dfb1f9806e6d1075ba
+│   │   ├── 8f
+│   │   │   └── c1a39ec0fda962b55b201ff0277e1be13b4d2b
+│   │   ├── 90
+│   │   │   └── aff1356fb0dd5823f6d33e4030da6bdf4229fb
+│   │   ├── 95
+│   │   │   └── a13084133dc97dabbfc4415f4cfd221c6947d3
 │   │   ├── 97
 │   │   │   └── be097ae43d5627b304781d000339573c625109
+│   │   ├── 98
+│   │   │   └── 275e8d3a2a371ba08e6a7ca90230e684b88714
 │   │   ├── 9a
 │   │   │   ├── 05815547e64e90382923d950cd56590076885a
 │   │   │   └── 16df024f4f7c13f6b1c4688366a1fe4f7d5c51
 │   │   ├── 9b
 │   │   │   └── a4e83a73d5b2426ad177308f59f6b52e902f58
+│   │   ├── 9d
+│   │   │   └── 4dbc1829320239cb74591c45042d92b204c34c
 │   │   ├── a0
 │   │   │   ├── 7a478bd84f3c8c718e6981f295a7cd41c9d690
 │   │   │   └── db5ef9fe7ef9febbc2926d3f44c5e16c957b78
+│   │   ├── a1
+│   │   │   └── 9c7439ae9341bfb9342a6270c6a1c113ea31fa
 │   │   ├── a3
 │   │   │   └── df5c23f63e8850117c5172169ab8769f48d0b4
 │   │   ├── a8
 │   │   │   └── 57078fc802975ab4a1ce99c3539db4bc7b6efc
 │   │   ├── ab
-│   │   │   └── 30680a246725c7e2ba834b7943f22880cba584
+│   │   │   ├── 30680a246725c7e2ba834b7943f22880cba584
+│   │   │   └── 88e15ec0ab23f05077974e3248d49004fe9269
 │   │   ├── af
 │   │   │   ├── 2f2c7d880d15d4dd2c42a5c9f6e24505db1bad
 │   │   │   └── 547aebab1695d9c1e41978a3116b5acc125b4b
 │   │   ├── b1
 │   │   │   └── 73cb4c094bb72bd80a144d74aab93b70605316
 │   │   ├── b2
+│   │   │   ├── 4846a6d25cd6868dba1a776c23d7824f42d719
 │   │   │   └── 9f5cd3c344976eef0c4981fad75cb1e4cd24c2
 │   │   ├── b5
 │   │   │   └── 28a8d927eda6b683b6dd6332d1ba320e0b52a8
@@ -177,6 +205,10 @@ unicred-backend
 │   │   │   └── 0348556321942a53812454e1e4ee01bf87db46
 │   │   ├── c7
 │   │   │   └── 9237926b9497cf86ea5e01336a7a8de748d228
+│   │   ├── c8
+│   │   │   └── 0e74c634177c74847edb0d68675069b2ddec23
+│   │   ├── cb
+│   │   │   └── 9a1fff57cec052a5fb923a905a6c0e32f06d61
 │   │   ├── ce
 │   │   │   ├── 297cf554c86b73375c8d70634dcc666fbe5117
 │   │   │   ├── 967227508022107d8f2c34ef40a5bc6a0ba02c
@@ -194,6 +226,7 @@ unicred-backend
 │   │   ├── e1
 │   │   │   └── 4b581bca7b1d91763a316630bb906ba6c868bd
 │   │   ├── e5
+│   │   │   ├── b05dc55c3660578fda73ae6e43516b9154a353
 │   │   │   └── ec83b5a02bd03b6624b057f158a9b6ec5a7b83
 │   │   ├── e6
 │   │   │   └── a19409fb0d16410a784c8e0e07d5d1b959bb14
@@ -303,6 +336,8 @@ unicred-backend
 │   │       ├── query_engine-windows.dll.node
 │   │       ├── query_engine-windows.dll.node.tmp21292
 │   │       ├── query_engine-windows.dll.node.tmp21904
+│   │       ├── query_engine-windows.dll.node.tmp23296
+│   │       ├── query_engine-windows.dll.node.tmp4872
 │   │       ├── query_engine_bg.js
 │   │       ├── query_engine_bg.wasm
 │   │       ├── schema.prisma
@@ -926,6 +961,15 @@ unicred-backend
 │   │   ├── lib
 │   │   │   └── index.js
 │   │   ├── LICENSE
+│   │   ├── package.json
+│   │   └── README.md
+│   ├── csrf-csrf
+│   │   ├── dist
+│   │   │   ├── index.cjs
+│   │   │   ├── index.d.cts
+│   │   │   ├── index.d.ts
+│   │   │   └── index.js
+│   │   ├── LICENSE.md
 │   │   ├── package.json
 │   │   └── README.md
 │   ├── debug
@@ -5694,6 +5738,117 @@ unicred-backend
 │   │       ├── clang-format.js
 │   │       ├── conversion.js
 │   │       └── README.md
+│   ├── node-cron
+│   │   ├── dist
+│   │   │   ├── coordinator
+│   │   │   │   ├── env-var-run-coordinator.cjs
+│   │   │   │   ├── env-var-run-coordinator.cjs.map
+│   │   │   │   ├── env-var-run-coordinator.js
+│   │   │   │   ├── env-var-run-coordinator.js.map
+│   │   │   │   ├── ipc-run-coordinator.cjs
+│   │   │   │   ├── ipc-run-coordinator.cjs.map
+│   │   │   │   ├── ipc-run-coordinator.js
+│   │   │   │   ├── ipc-run-coordinator.js.map
+│   │   │   │   ├── run-coordinator.cjs
+│   │   │   │   ├── run-coordinator.cjs.map
+│   │   │   │   ├── run-coordinator.js
+│   │   │   │   └── run-coordinator.js.map
+│   │   │   ├── create-id.cjs
+│   │   │   ├── create-id.cjs.map
+│   │   │   ├── create-id.js
+│   │   │   ├── create-id.js.map
+│   │   │   ├── logger.cjs
+│   │   │   ├── logger.cjs.map
+│   │   │   ├── logger.js
+│   │   │   ├── logger.js.map
+│   │   │   ├── node-cron.cjs
+│   │   │   ├── node-cron.cjs.map
+│   │   │   ├── node-cron.d.ts
+│   │   │   ├── node-cron.js
+│   │   │   ├── node-cron.js.map
+│   │   │   ├── pattern
+│   │   │   │   ├── conversion
+│   │   │   │   │   ├── asterisk-to-range-conversion.cjs
+│   │   │   │   │   ├── asterisk-to-range-conversion.cjs.map
+│   │   │   │   │   ├── asterisk-to-range-conversion.js
+│   │   │   │   │   ├── asterisk-to-range-conversion.js.map
+│   │   │   │   │   ├── index.cjs
+│   │   │   │   │   ├── index.cjs.map
+│   │   │   │   │   ├── index.js
+│   │   │   │   │   ├── index.js.map
+│   │   │   │   │   ├── month-names-conversion.cjs
+│   │   │   │   │   ├── month-names-conversion.cjs.map
+│   │   │   │   │   ├── month-names-conversion.js
+│   │   │   │   │   ├── month-names-conversion.js.map
+│   │   │   │   │   ├── range-conversion.cjs
+│   │   │   │   │   ├── range-conversion.cjs.map
+│   │   │   │   │   ├── range-conversion.js
+│   │   │   │   │   ├── range-conversion.js.map
+│   │   │   │   │   ├── week-day-names-conversion.cjs
+│   │   │   │   │   ├── week-day-names-conversion.cjs.map
+│   │   │   │   │   ├── week-day-names-conversion.js
+│   │   │   │   │   └── week-day-names-conversion.js.map
+│   │   │   │   └── validation
+│   │   │   │       ├── pattern-validation.cjs
+│   │   │   │       ├── pattern-validation.cjs.map
+│   │   │   │       ├── pattern-validation.js
+│   │   │   │       └── pattern-validation.js.map
+│   │   │   ├── promise
+│   │   │   │   ├── tracked-promise.cjs
+│   │   │   │   ├── tracked-promise.cjs.map
+│   │   │   │   ├── tracked-promise.js
+│   │   │   │   └── tracked-promise.js.map
+│   │   │   ├── scheduler
+│   │   │   │   ├── plan-beat.cjs
+│   │   │   │   ├── plan-beat.cjs.map
+│   │   │   │   ├── plan-beat.js
+│   │   │   │   ├── plan-beat.js.map
+│   │   │   │   ├── runner.cjs
+│   │   │   │   ├── runner.cjs.map
+│   │   │   │   ├── runner.js
+│   │   │   │   └── runner.js.map
+│   │   │   ├── task-registry.cjs
+│   │   │   ├── task-registry.cjs.map
+│   │   │   ├── task-registry.js
+│   │   │   ├── task-registry.js.map
+│   │   │   ├── tasks
+│   │   │   │   ├── background-scheduled-task
+│   │   │   │   │   ├── background-scheduled-task.cjs
+│   │   │   │   │   ├── background-scheduled-task.cjs.map
+│   │   │   │   │   ├── background-scheduled-task.js
+│   │   │   │   │   ├── background-scheduled-task.js.map
+│   │   │   │   │   ├── daemon.cjs
+│   │   │   │   │   ├── daemon.cjs.map
+│   │   │   │   │   ├── daemon.js
+│   │   │   │   │   └── daemon.js.map
+│   │   │   │   ├── inline-scheduled-task.cjs
+│   │   │   │   ├── inline-scheduled-task.cjs.map
+│   │   │   │   ├── inline-scheduled-task.js
+│   │   │   │   ├── inline-scheduled-task.js.map
+│   │   │   │   ├── state-machine.cjs
+│   │   │   │   ├── state-machine.cjs.map
+│   │   │   │   ├── state-machine.js
+│   │   │   │   └── state-machine.js.map
+│   │   │   └── time
+│   │   │       ├── day-of-month.cjs
+│   │   │       ├── day-of-month.cjs.map
+│   │   │       ├── day-of-month.js
+│   │   │       ├── day-of-month.js.map
+│   │   │       ├── localized-time.cjs
+│   │   │       ├── localized-time.cjs.map
+│   │   │       ├── localized-time.js
+│   │   │       ├── localized-time.js.map
+│   │   │       ├── matcher-walker.cjs
+│   │   │       ├── matcher-walker.cjs.map
+│   │   │       ├── matcher-walker.js
+│   │   │       ├── matcher-walker.js.map
+│   │   │       ├── time-matcher.cjs
+│   │   │       ├── time-matcher.cjs.map
+│   │   │       ├── time-matcher.js
+│   │   │       └── time-matcher.js.map
+│   │   ├── LICENSE.md
+│   │   ├── package.json
+│   │   └── README.md
 │   ├── node-fetch-native
 │   │   ├── dist
 │   │   │   ├── chunks
@@ -5742,6 +5897,79 @@ unicred-backend
 │   │   ├── package.json
 │   │   ├── README.md
 │   │   └── SECURITY.md
+│   ├── nodemailer
+│   │   ├── .gitattributes
+│   │   ├── .ncurc.js
+│   │   ├── .prettierignore
+│   │   ├── .prettierrc
+│   │   ├── .prettierrc.js
+│   │   ├── .release-please-config.json
+│   │   ├── CHANGELOG.md
+│   │   ├── CLAUDE.md
+│   │   ├── CODE_OF_CONDUCT.md
+│   │   ├── eslint.config.js
+│   │   ├── lib
+│   │   │   ├── addressparser
+│   │   │   │   └── index.js
+│   │   │   ├── base64
+│   │   │   │   └── index.js
+│   │   │   ├── dkim
+│   │   │   │   ├── index.js
+│   │   │   │   ├── message-parser.js
+│   │   │   │   ├── relaxed-body.js
+│   │   │   │   └── sign.js
+│   │   │   ├── errors.js
+│   │   │   ├── fetch
+│   │   │   │   ├── cookies.js
+│   │   │   │   └── index.js
+│   │   │   ├── json-transport
+│   │   │   │   └── index.js
+│   │   │   ├── mail-composer
+│   │   │   │   └── index.js
+│   │   │   ├── mailer
+│   │   │   │   ├── index.js
+│   │   │   │   └── mail-message.js
+│   │   │   ├── mime-funcs
+│   │   │   │   ├── index.js
+│   │   │   │   └── mime-types.js
+│   │   │   ├── mime-node
+│   │   │   │   ├── index.js
+│   │   │   │   ├── last-newline.js
+│   │   │   │   ├── le-unix.js
+│   │   │   │   └── le-windows.js
+│   │   │   ├── nodemailer.js
+│   │   │   ├── punycode
+│   │   │   │   └── index.js
+│   │   │   ├── qp
+│   │   │   │   └── index.js
+│   │   │   ├── sendmail-transport
+│   │   │   │   └── index.js
+│   │   │   ├── ses-transport
+│   │   │   │   └── index.js
+│   │   │   ├── shared
+│   │   │   │   ├── index.js
+│   │   │   │   └── url.js
+│   │   │   ├── smtp-connection
+│   │   │   │   ├── data-stream.js
+│   │   │   │   ├── http-proxy-client.js
+│   │   │   │   └── index.js
+│   │   │   ├── smtp-pool
+│   │   │   │   ├── index.js
+│   │   │   │   └── pool-resource.js
+│   │   │   ├── smtp-transport
+│   │   │   │   └── index.js
+│   │   │   ├── stream-transport
+│   │   │   │   └── index.js
+│   │   │   ├── well-known
+│   │   │   │   ├── index.js
+│   │   │   │   └── services.json
+│   │   │   └── xoauth2
+│   │   │       └── index.js
+│   │   ├── LICENSE
+│   │   ├── package.json
+│   │   ├── README.md
+│   │   ├── SECURITY.md
+│   │   └── SECURITY.txt
 │   ├── nodemon
 │   │   ├── .prettierrc.json
 │   │   ├── bin
@@ -6613,6 +6841,8 @@ unicred-backend
 │   │   │   └── migration.sql
 │   │   ├── 20260618151449_make_rollno_school_scoped
 │   │   │   └── migration.sql
+│   │   ├── 20260621060326_add_otp_verification
+│   │   │   └── migration.sql
 │   │   └── migration_lock.toml
 │   └── schema.prisma
 ├── prisma.config.ts
@@ -6624,6 +6854,8 @@ unicred-backend
 │   ├── config
 │   │   ├── db.js
 │   │   └── env.js
+│   ├── constants
+│   │   └── notificationTypes.js
 │   ├── middleware
 │   │   ├── auth.middleware.js
 │   │   ├── error.middleware.js
@@ -6663,10 +6895,10 @@ unicred-backend
 │   │   │   ├── internships.routes.js
 │   │   │   └── internships.service.js
 │   │   ├── notifications
-│   │   │   ├── notifications.controller.js
-│   │   │   ├── notifications.repository.js
-│   │   │   ├── notifications.routes.js
-│   │   │   └── notifications.service.js
+│   │   │   ├── notification.controller.js
+│   │   │   ├── notification.repository.js
+│   │   │   ├── notification.routes.js
+│   │   │   └── notification.service.js
 │   │   ├── resumes
 │   │   │   ├── resumes.controller.js
 │   │   │   ├── resumes.repository.js
@@ -6687,8 +6919,12 @@ unicred-backend
 │   ├── server.js
 │   └── utils
 │       ├── apiResponse.js
+│       ├── AppError.js
 │       ├── audit.js
 │       ├── authorization.js
+│       ├── email.js
 │       ├── hash.js
-│       └── jwt.js
+│       ├── jwt.js
+│       └── notify.js
+├── src.zip
 └── test-prisma.js

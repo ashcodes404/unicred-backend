@@ -38,7 +38,7 @@ const rateLimit = require("express-rate-limit");
  */
 const loginRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes (in milliseconds)
-  max: 50,                    // max 5 requests per windowMs per IP
+  max: 5,                    // max 5 requests per windowMs per IP
 
   // This message is sent when the limit is exceeded
   message: {
@@ -67,7 +67,7 @@ const loginRateLimiter = rateLimit({
  */
 const refreshRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20,                   // max 20 refresh requests per 15 minutes per IP
+  max: 5,                   // max 20 refresh requests per 15 minutes per IP
 
   message: {
     success: false,
@@ -78,7 +78,29 @@ const refreshRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+
+const otpRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes (in milliseconds)
+  max: 3,                    // max 5 requests per windowMs per IP
+
+  // This message is sent when the limit is exceeded
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again after 15 minutes.",
+  },
+
+  // standardHeaders: true → sends rate limit info in response headers
+  // The frontend can read these headers to show "you have X attempts left"
+  // Headers added: RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset
+  standardHeaders: true,
+
+  // legacyHeaders: false → disables old X-RateLimit-* headers (they're outdated)
+  legacyHeaders: false,
+});
+
+
 module.exports = {
   loginRateLimiter,
   refreshRateLimiter,
+  otpRateLimiter
 };

@@ -29,6 +29,54 @@ async function comparePassword(plainPassword, hashedPassword) {
 }
 
 /**
+ * ==========================================================
+ * OTP HASHING
+ * ==========================================================
+ *
+ * WHY HASH OTPs?
+ *
+ * Imagine database gets leaked.
+ *
+ * If OTP stored as:
+ *
+ * 123456
+ *
+ * Hacker can immediately use it.
+ *
+ * If OTP stored as:
+ *
+ * $2b$12$kjasdjkashd...
+ *
+ * Hacker cannot recover original OTP.
+ *
+ * Same concept as password hashing.
+ *
+ * We use bcrypt because OTP verification
+ * works exactly like password verification.
+ */
+
+/**
+ * Hash OTP before storing in database.
+ *
+ * @param {string} otp
+ * @returns {Promise<string>}
+ */
+async function hashOtp(otp) {
+  return bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
+}
+
+/**
+ * Compare entered OTP with stored hash.
+ *
+ * @param {string} otp
+ * @param {string} hashedOtp
+ * @returns {Promise<boolean>}
+ */
+async function compareOtp(otp, hashedOtp) {
+  return bcrypt.compare(otp, hashedOtp);
+}
+
+/**
  * REFRESH TOKEN HASHING (SHA-256)
  *
  * We never store the raw refresh token in the database.
@@ -64,6 +112,8 @@ function hashRefreshToken(rawToken) {
 module.exports = {
   hashPassword,
   comparePassword,
+  hashOtp, 
+  compareOtp,
   generateRefreshToken,
   hashRefreshToken,
 };

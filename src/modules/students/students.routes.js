@@ -8,8 +8,8 @@ const {
   createStudent,
   updateStudent,
   deleteStudent,
-  completeStudentProfile
-}  = require("./students.controller");
+  completeStudentProfile,
+} = require("./students.controller");
 
 const authenticate = require("../../middleware/auth.middleware");
 
@@ -59,9 +59,8 @@ router.get(
   authenticate,
   tenantMiddleware,
   requireRole("admin", "faculty", "hod"),
-  getAllStudents
+  getAllStudents,
 );
-
 
 /**
  * =====================================================
@@ -87,7 +86,7 @@ router.post(
   "/profile",
   authenticate,
   requireRole("student"),
-  completeStudentProfile
+  completeStudentProfile,
 );
 
 /**
@@ -102,8 +101,8 @@ router.get(
   "/:id",
   authenticate,
   tenantMiddleware,
-  requireRole("admin", "faculty", "hod" , "student"),
-  getStudentById
+  requireRole("admin", "faculty", "hod", "student"),
+  getStudentById,
 );
 
 /**
@@ -116,7 +115,7 @@ router.post(
   authenticate,
   tenantMiddleware,
   requireRole("admin"),
-  createStudent
+  createStudent,
 );
 
 /**
@@ -131,7 +130,7 @@ router.put(
   authenticate,
   tenantMiddleware,
   requireRole("admin", "hod"),
-  updateStudent
+  updateStudent,
 );
 
 /**
@@ -144,7 +143,7 @@ router.delete(
   authenticate,
   tenantMiddleware,
   requireRole("admin"),
-  deleteStudent
+  deleteStudent,
 );
 
 module.exports = router;

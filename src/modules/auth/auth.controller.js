@@ -119,7 +119,7 @@ async function loginHandler(req, res, next) {
 
     const { accessToken, refreshToken, user } = await authService.login(
       { email, password },
-      deviceInfo
+      deviceInfo,
     );
 
     setRefreshTokenCookie(res, refreshToken);
@@ -138,10 +138,8 @@ async function refreshHandler(req, res, next) {
     const rawRefreshToken = req.cookies?.refreshToken;
     const deviceInfo = extractDeviceInfo(req);
 
-    const { accessToken, refreshToken: newRefreshToken } = await authService.refresh(
-      rawRefreshToken,
-      deviceInfo
-    );
+    const { accessToken, refreshToken: newRefreshToken } =
+      await authService.refresh(rawRefreshToken, deviceInfo);
 
     setRefreshTokenCookie(res, newRefreshToken);
 
@@ -188,7 +186,6 @@ async function logoutAllHandler(req, res, next) {
   }
 }
 
-
 /**
  * --------------------------------------------------------
  * VERIFY OTP CONTROLLER
@@ -205,16 +202,9 @@ async function logoutAllHandler(req, res, next) {
  */
 async function verifyOtp(req, res, next) {
   try {
-    const result = await authService.verifyOtp(
-      req.body
-    );
+    const result = await authService.verifyOtp(req.body);
 
-    return success(
-      res,
-      200,
-      "Email verified successfully",
-      result,
-    );
+    return success(res, 200, "Email verified successfully", result);
   } catch (err) {
     next(err);
   }
@@ -235,16 +225,66 @@ async function verifyOtp(req, res, next) {
  */
 async function resendOtp(req, res, next) {
   try {
-    const result = await authService.resendOtp(
-      req.body
-    );
+    const result = await authService.resendOtp(req.body);
+
+    return success(res, 200, "OTP sent successfully", result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function forgotPassword(req, res, next) {
+  try {
+    const result = await authService.forgotPassword(req.body);
+
+    return success(res, 200, result.message);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function resetPassword(req, res, next) {
+  try {
+    const result = await authService.resetPassword(req.body);
+
+    return success(res, 200, result.message);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * ============================================================
+ * VERIFY RESET OTP CONTROLLER
+ * ============================================================
+ *
+ * Route:
+ * POST /auth/verify-reset-otp
+ *
+ * Body:
+ * {
+ *   "email": "student@school.com",
+ *   "otp": "123456"
+ * }
+ *
+ * Purpose:
+ * Verify password reset OTP before
+ * allowing user to set a new password.
+ */
+async function verifyResetOtp(req, res, next) {
+  try {
+    const result =
+      await authService.verifyResetOtp(
+        req.body
+      );
 
     return success(
       res,
       200,
-      "OTP sent successfully",
-      result,
+      result.message,
+      result
     );
+
   } catch (err) {
     next(err);
   }
@@ -256,6 +296,9 @@ module.exports = {
   refreshHandler,
   logoutHandler,
   logoutAllHandler,
-  verifyOtp, 
+  verifyOtp,
   resendOtp,
+  forgotPassword,
+  resetPassword,
+  verifyResetOtp, 
 };
