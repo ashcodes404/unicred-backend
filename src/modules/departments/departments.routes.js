@@ -55,14 +55,13 @@ const requireRole = require(
  *
  * BUGFIX (critical):
  *
- * tenantMiddleware was missing from every route below.
+ 
  * The controller reads req.schoolId — which is ONLY set
  * by tenantMiddleware — so without it, req.schoolId was
  * `undefined` on every request. Prisma silently drops
  * `undefined` where-clause values instead of filtering
  * by them, meaning GET/PUT/DELETE /:id worked across
- * EVERY school, not just the caller's own. Fixed by
- * adding tenantMiddleware to all five routes.
+ * EVERY school, not just the caller's own. 
  */
 
 /**
