@@ -223,6 +223,46 @@ async function updateDepartment(
 
 /**
  * =====================================================
+ * FIND DEPARTMENTS HEADED BY A USER
+ * =====================================================
+ *
+ * Purpose:
+ *
+ * Return every active department whose hodUserId equals
+ * the given user.
+ *
+ * Used by the HOD role reconciliation:
+ *
+ *   length === 0  → user heads nothing → demote to faculty
+ *   length  >  0  → user still heads something → keep as hod
+ *
+ * It also powers the "one HOD per department" rule: if
+ * this returns a department whose id is NOT the one being
+ * edited, the target already heads another department.
+ *
+ * prisma.department.findMany() is the built-in Prisma read
+ * that returns every row matching the where clause. We
+ * only `select` the id because that's all the caller needs.
+ */
+async function findDepartmentsByHod(
+  hodUserId,
+  schoolId
+) {
+  return prisma.department.findMany({
+    where: {
+      hodUserId,
+      schoolId,
+      deletedAt: null,
+    },
+
+    select: {
+      id: true,
+    },
+  });
+}
+
+/**
+ * =====================================================
  * SOFT DELETE DEPARTMENT
  * =====================================================
  *
@@ -290,5 +330,6 @@ module.exports = {
   findByName,
   createDepartment,
   updateDepartment,
+  findDepartmentsByHod,
   deleteDepartment,
 };

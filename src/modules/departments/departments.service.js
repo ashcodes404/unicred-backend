@@ -6,9 +6,82 @@ const userRepository = require(
   "../users/users.repository"
 );
 
-const { isHod } = require(
-  "../../utils/authorization"
-);
+/**
+ * =====================================================
+ * HELPER: reconcileHodRole  (written by us)
+ * =====================================================
+ *
+ * Makes ONE user's `role` agree with reality:
+ *
+ *   heads >= 1 department  → role must be "hod"
+ *   heads 0 departments    → role must be "faculty"
+ *
+ * The department table (its hodUserId column) is the
+ * single source of truth for "who is an HOD". This helper
+ * just DERIVES the role from it — which means one function
+ * covers every case you asked for:
+ *
+ *   - admin assigns a faculty as HOD      → promotes
+ *   - admin moves headship to someone new → demotes the old
+ *   - admin unassigns the HOD             → demotes
+ *   - leftover hod heading nothing        → demotes (self-heal)
+ *
+ * Students and admins are never touched — only the two
+ * roles that take part in headship (faculty <-> hod).
+ */
+async function reconcileHodRole(userId, schoolId) {
+  // No user to reconcile (e.g. there was no previous HOD).
+  if (!userId) {
+    return;
+  }
+
+  const user = await userRepository.findById(
+    userId,
+    schoolId
+  );
+
+  // User may be deactivated or from another school — skip safely.
+  if (!user) {
+    return;
+  }
+
+  // Never auto-flip a student or an admin.
+  if (
+    user.role !== "faculty" &&
+    user.role !== "hod"
+  ) {
+    return;
+  }
+
+  // How many departments does this user currently head?
+  const headedDepartments =
+    await departmentRepository.findDepartmentsByHod(
+      userId,
+      schoolId
+    );
+
+  const headsAtLeastOne =
+    headedDepartments.length > 0;
+
+  if (headsAtLeastOne && user.role !== "hod") {
+    // Faculty just became a head → promote to hod.
+    await userRepository.updateRole(
+      userId,
+      schoolId,
+      "hod"
+    );
+  } else if (
+    !headsAtLeastOne &&
+    user.role === "hod"
+  ) {
+    // Former head now heads nothing → demote to faculty.
+    await userRepository.updateRole(
+      userId,
+      schoolId,
+      "faculty"
+    );
+  }
+}
 
 /**
  * =====================================================
@@ -193,6 +266,11 @@ async function updateDepartment(
 
   const { name, hodUserId } = updateData;
 
+  // Remember who currently heads this department, so we can
+  // demote them later if they get replaced or unassigned.
+  const previousHodUserId =
+    existingDepartment.hodUserId;
+
   const whitelisted = {};
 
   /**
@@ -221,10 +299,15 @@ async function updateDepartment(
 
   /**
    * HOD reassignment — validate the target user.
+   *
+   * NOTE: we do NOT require the target to already be an
+   * "hod". The whole point is that assigning a faculty
+   * here PROMOTES them. The actual role change happens
+   * after the department write, via reconcileHodRole().
    */
   if (hodUserId !== undefined) {
     if (hodUserId === null) {
-      // Explicit unassignment.
+      // Explicit unassignment — department will have no HOD.
       whitelisted.hodUserId = null;
     } else {
       const hodUser = await userRepository.findById(
@@ -238,9 +321,33 @@ async function updateDepartment(
         );
       }
 
-      if (!isHod(hodUser.role)) {
+      // A HOD must be a teaching member. Only a faculty
+      // (to be promoted) or an existing hod are allowed.
+      // Students and admins can never head a department.
+      if (
+        hodUser.role !== "faculty" &&
+        hodUser.role !== "hod"
+      ) {
         throw new Error(
-          "Assigned HOD must have the hod role"
+          "Only a faculty member can be made HOD"
+        );
+      }
+
+      // Enforce "one HOD heads one department": reject if
+      // this user already heads a DIFFERENT department.
+      const alreadyHeads =
+        await departmentRepository.findDepartmentsByHod(
+          hodUserId,
+          schoolId
+        );
+
+      const headsAnotherDept = alreadyHeads.some(
+        (dept) => dept.id !== departmentId
+      );
+
+      if (headsAnotherDept) {
+        throw new Error(
+          "This user is already HOD of another department"
         );
       }
 
@@ -253,6 +360,32 @@ async function updateDepartment(
     schoolId,
     whitelisted
   );
+
+  /**
+   * Keep user roles in sync with the new headship.
+   *
+   * The department write above is the source of truth.
+   * We only act if the HOD actually changed.
+   *
+   * - reconcile the NEW user  → promotes faculty to hod
+   * - reconcile the OLD user  → demotes them to faculty
+   *                             (since one HOD heads only
+   *                             one department, losing it
+   *                             means they head nothing)
+   *
+   * reconcileHodRole ignores null ids and same-as-before
+   * cases on its own, so this stays safe for unassignment.
+   */
+  if (
+    hodUserId !== undefined &&
+    hodUserId !== previousHodUserId
+  ) {
+    await reconcileHodRole(hodUserId, schoolId);
+    await reconcileHodRole(
+      previousHodUserId,
+      schoolId
+    );
+  }
 
   return departmentRepository.findById(
     departmentId,
@@ -302,6 +435,61 @@ async function deleteDepartment(
 
 /**
  * =====================================================
+ * RECONCILE ALL HOD ROLES  (self-heal, written by us)
+ * =====================================================
+ *
+ * One-shot cleanup for an ENTIRE school.
+ *
+ * Finds every user whose role is "hod" but who heads no
+ * active department, and demotes them to "faculty".
+ *
+ * Use this to fix data that went bad BEFORE this logic
+ * existed (the original bug), or as a periodic safety net.
+ *
+ * Returns the list of users that were demoted.
+ */
+async function reconcileAllHodRoles(schoolId) {
+  // findAllBySchool(schoolId, "hod") returns every user in
+  // this school whose role is "hod".
+  const hodUsers =
+    await userRepository.findAllBySchool(
+      schoolId,
+      "hod"
+    );
+
+  const demoted = [];
+
+  for (const user of hodUsers) {
+    const headed =
+      await departmentRepository.findDepartmentsByHod(
+        user.id,
+        schoolId
+      );
+
+    // role is "hod" but heads nothing → demote.
+    if (headed.length === 0) {
+      await userRepository.updateRole(
+        user.id,
+        schoolId,
+        "faculty"
+      );
+
+      demoted.push({
+        userId: user.id,
+        name: user.name,
+      });
+    }
+  }
+
+  return {
+    success: true,
+    demotedCount: demoted.length,
+    demoted,
+  };
+}
+
+/**
+ * =====================================================
  * EXPORTS
  * =====================================================
  */
@@ -311,4 +499,5 @@ module.exports = {
   createDepartment,
   updateDepartment,
   deleteDepartment,
+  reconcileAllHodRoles,
 };

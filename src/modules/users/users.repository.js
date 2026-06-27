@@ -113,6 +113,32 @@ async function updateSelf(userId, updateData) {
 }
 
 /**
+ * Update ONLY a user's role.
+ *
+ * Used by the HOD reconciliation logic to promote a
+ * faculty to "hod", or demote a former HOD back to
+ * "faculty". Scoped by schoolId so one school can never
+ * change another school's user.
+ *
+ * prisma.user.updateMany() is a built-in Prisma method
+ * that updates every row matching `where`. We use the
+ * "Many" variant (not update()) so we can add the
+ * schoolId + deletedAt guards — plain update() only
+ * accepts a single unique id with no extra filters.
+ */
+async function updateRole(userId, schoolId, role) {
+  return prisma.user.updateMany({
+    where: {
+      id: userId,
+      schoolId,
+      deletedAt: null,
+    },
+
+    data: { role },
+  });
+}
+
+/**
  * Soft-deactivate a user (admin only).
  *
  * We never hard-delete a User row — Student/Faculty
@@ -167,6 +193,7 @@ module.exports = {
   findById,
   findAllBySchool,
   updateSelf,
+  updateRole,
   deactivateUser,
   revokeAllRefreshTokens,
 };

@@ -261,6 +261,47 @@ async function deleteDepartment(
 
 /**
  * =====================================================
+ * RECONCILE HOD ROLES (self-heal)
+ * =====================================================
+ *
+ * Route:
+ *
+ * POST /api/departments/reconcile-hods
+ *
+ * Access:
+ *
+ * ADMIN only
+ *
+ * Demotes any user who is still role="hod" but heads no
+ * department back to "faculty". Cleans up old bad data.
+ */
+async function reconcileHods(
+  req,
+  res
+) {
+  try {
+    const result =
+      await departmentService.reconcileAllHodRoles(
+        req.schoolId
+      );
+
+    return success(
+      res,
+      200,
+      "HOD roles reconciled successfully",
+      result
+    );
+  } catch (err) {
+    return error(
+      res,
+      400,
+      err.message
+    );
+  }
+}
+
+/**
+ * =====================================================
  * EXPORTS
  * =====================================================
  */
@@ -270,4 +311,5 @@ module.exports = {
   createDepartment,
   updateDepartment,
   deleteDepartment,
+  reconcileHods,
 };

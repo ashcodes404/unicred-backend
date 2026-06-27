@@ -43,10 +43,15 @@ const userRoutes = require("../modules/users/users.routes");
 */
 const notificationRoutes = require("../modules/notifications/notification.routes");
 
-const academicSessionRoutes  = require("../modules/academic-sessions/academic-sessions.routes");
+const academicSessionRoutes  =  require("../modules/academic-sessions/academic-sessions.routes");
 const courseRoutes            = require("../modules/courses/courses.routes");
 const facultyAssignmentRoutes = require("../modules/faculty-assignments/faculty-assignments.routes");
 const studentRegRoutes        = require("../modules/student-registration/student-registration.routes");
+const gradingRoutes        =    require("../modules/grading/grading.routes");
+const resultsRoutes        =    require("../modules/results/results.routes");
+const reappearRoutes       =    require("../modules/reappear/reappear.routes");
+const studentResultRoutes  =    require("../modules/results/student-results.routes");
+
 /*
 |--------------------------------------------------------------------------
 | Route Registration
@@ -82,6 +87,18 @@ router.use("/faculty-assignments", facultyAssignmentRoutes);
 //   router.use("/", studentRegRoutes);
 // Or mount at a sub-path:
 router.use("/studentReg", studentRegRoutes);
+ 
+// Admin manages grading systems for their school
+router.use("/grading-systems", gradingRoutes);
+ 
+// HOD creates publications, faculty uploads marks, HOD publishes
+router.use("/results", resultsRoutes);
+ 
+// Student applies for reappear, HOD approves/rejects, faculty uploads reappear marks
+router.use("/reappear", reappearRoutes);
+ 
+// Student views their results and CGPA (mounts under /students/...)
+router.use("/students", studentResultRoutes);
  
 
 module.exports = router;

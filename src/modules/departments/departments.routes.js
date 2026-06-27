@@ -138,6 +138,35 @@ router.post(
 
 /**
  * =====================================================
+ * RECONCILE HOD ROLES (self-heal)
+ * =====================================================
+ *
+ * Route:
+ *
+ * POST /api/departments/reconcile-hods
+ *
+ * Access:
+ *
+ * ADMIN only
+ *
+ * Demotes any "hod" who heads no department back to
+ * "faculty". Safe to run any time — does nothing when
+ * data is already consistent.
+ *
+ * NOTE: declared BEFORE "/:id" routes is not required
+ * here because those are GET, but keeping POST routes
+ * grouped keeps things readable.
+ */
+router.post(
+  "/reconcile-hods",
+  authenticate,
+  tenantMiddleware,
+  requireRole("admin"),
+  departmentController.reconcileHods
+);
+
+/**
+ * =====================================================
  * UPDATE DEPARTMENT
  * =====================================================
  *

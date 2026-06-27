@@ -1,32 +1,3 @@
-// =============================================================================
-// Unicred — Prisma Schema v2
-// Database : MySQL (TiDB Serverless for dev, Railway MySQL for prod)
-// ORM      : Prisma (relationMode = "prisma" for TiDB compatibility)
-// Updated  : v2 — Academic Management System added
-//
-// Multi-tenancy rule (CRITICAL):
-//   Every table that holds school-scoped data has a `schoolId` column.
-//   Every repository query MUST filter by schoolId — no exceptions.
-//   Missing a schoolId filter = data leak between schools.
-//
-// Table groups:
-//   1.  Tenancy & Identity     — schools, users, departments
-//   2.  People                 — students, faculty
-//   3.  Auth                   — refresh_tokens, otp_verifications, audit_logs
-//   4.  Academic Core          — academic_sessions, semesters, subjects,
-//                                course_offerings, faculty_assignments,
-//                                student_session_registrations, syllabi
-//   5.  Results                — result_publications, faculty_result_submissions,
-//                                subject_marks, cgpa_records
-//   6.  Reappear               — reappear_applications
-//   7.  Timetable              — timetables, timetable_slots
-//   8.  Attendance             — attendance
-//   9.  Assessments            — internal_assessments
-//  10.  Student Profile        — skills, projects
-//  11.  Achievements           — achievements, internships, placements
-//  12.  Communication          — notifications, announcements
-// =============================================================================
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -34,23 +5,16 @@ generator client {
 datasource db {
   provider     = "mysql"
   url          = env("DATABASE_URL")
-  relationMode = "prisma" // Required for TiDB Serverless — no foreign key enforcement at DB level
+  relationMode = "prisma"
 }
 
-// =============================================================================
-// 1. TENANCY & IDENTITY
-// =============================================================================
-
-// Root tenant. Every other table traces back to a school via schoolId.
 model School {
-  id        Int       @id @default(autoincrement())
-  name      String
-  domain    String    @unique // Used for tenant resolution on login
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime? // Soft delete — never hard delete a school
-
-  // Relations
+  id                       Int                          @id @default(autoincrement())
+  name                     String
+  domain                   String                       @unique
+  createdAt                DateTime                     @default(now())
+  deletedAt                DateTime?
+  updatedAt                DateTime                     @updatedAt
   departments              Department[]
   users                    User[]
   faculty                  Faculty[]
@@ -69,63 +33,53 @@ model School {
   attendance               Attendance[]
   internalAssessments      InternalAssessment[]
   syllabi                  Syllabus[]
+  gradingSystems           GradingSystem[]
 
   @@map("schools")
 }
 
-// Single user table for all roles (student, faculty, hod, admin).
-// Role-specific data lives in Student or Faculty tables.
 model User {
-  id              Int       @id @default(autoincrement())
-  schoolId        Int
-  email           String    @unique
-  role            Role
-  name            String
-  passwordHash    String // bcrypt hash — never store plaintext
-  bio             String?
-  phoneNumber     String?
-  profilePhotoUrl String?
-  githubUrl       String?
-  linkedinUrl     String?
-  portfolioUrl    String?
-  emailVerified   Boolean   @default(false)
-  isActive        Boolean   @default(true)
-  lastLoginAt     DateTime?
-
-  // Lockout fields — used by Phase 2 auth hardening
-  failedLoginAttempts Int       @default(0)
+  id                  Int               @id @default(autoincrement())
+  schoolId            Int
+  email               String            @unique
+  role                Role
+  name                String
+  bio                 String?
+  createdAt           DateTime          @default(now())
+  deletedAt           DateTime?
+  emailVerified       Boolean           @default(false)
+  githubUrl           String?
+  isActive            Boolean           @default(true)
+  lastLoginAt         DateTime?
+  linkedinUrl         String?
+  passwordHash        String
+  phoneNumber         String?
+  portfolioUrl        String?
+  profilePhotoUrl     String?
+  updatedAt           DateTime          @updatedAt
+  failedLoginAttempts Int               @default(0)
   lockedUntil         DateTime?
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  // Relations
-  school           School            @relation(fields: [schoolId], references: [id])
-  student          Student?
-  faculty          Faculty?
-  hodOfDepartments Department[]      @relation("DepartmentHod")
-  refreshTokens    RefreshToken[]
-  otpVerifications OtpVerification[]
-  auditLogs        AuditLog[]
-  notifications    Notification[]
+  school              School            @relation(fields: [schoolId], references: [id])
+  student             Student?
+  faculty             Faculty?
+  hodOfDepartments    Department[]      @relation("DepartmentHod")
+  refreshTokens       RefreshToken[]
+  otpVerifications    OtpVerification[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
 
   @@index([schoolId])
   @@map("users")
 }
 
-// Academic departments within a school.
-// HOD is a User with role=hod who is linked here via hodUserId.
 model Department {
-  id        Int       @id @default(autoincrement())
-  schoolId  Int
-  name      String
-  hodUserId Int? // FK → User (role = hod). Nullable — dept can exist before HOD assigned.
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-
-  // Relations
+  id               Int               @id @default(autoincrement())
+  schoolId         Int
+  name             String
+  hodUserId        Int?
+  createdAt        DateTime          @default(now())
+  deletedAt        DateTime?
+  updatedAt        DateTime          @updatedAt
   school           School            @relation(fields: [schoolId], references: [id])
   hod              User?             @relation("DepartmentHod", fields: [hodUserId], references: [id])
   faculty          Faculty[]
@@ -140,29 +94,21 @@ model Department {
   @@map("departments")
 }
 
-// =============================================================================
-// 2. PEOPLE
-// =============================================================================
-
-// Student profile. Created separately after first login (not during registration).
-// One Student per User — enforced by @unique on userId.
 model Student {
-  id              Int       @id @default(autoincrement())
-  userId          Int       @unique
-  schoolId        Int
-  departmentId    Int
-  rollNo          String // Must be unique per school — see @@unique below
-  branch          String
-  batchYear       Int // Year of admission e.g. 2022
-  graduationYear  Int // Expected graduation year e.g. 2026
-  currentSemester Int // Updated automatically after result promotion
-  summary         String? // Short bio shown on student profile
-  isPlaced        Boolean   @default(false) // Set true when a Placement record is added
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  deletedAt       DateTime?
-
-  // Relations
+  id                   Int                          @id @default(autoincrement())
+  userId               Int                          @unique
+  schoolId             Int
+  departmentId         Int
+  rollNo               String
+  branch               String
+  batchYear            Int
+  summary              String?
+  createdAt            DateTime                     @default(now())
+  currentSemester      Int
+  deletedAt            DateTime?
+  graduationYear       Int
+  isPlaced             Boolean                      @default(false)
+  updatedAt            DateTime                     @updatedAt
   school               School                       @relation(fields: [schoolId], references: [id])
   department           Department                   @relation(fields: [departmentId], references: [id])
   user                 User                         @relation(fields: [userId], references: [id])
@@ -184,20 +130,16 @@ model Student {
   @@map("students")
 }
 
-// Faculty profile. HOD is also a Faculty — they just have role=hod on User.
-// One Faculty per User — enforced by @unique on userId.
 model Faculty {
-  id             Int       @id @default(autoincrement())
-  userId         Int       @unique
-  schoolId       Int
-  departmentId   Int
-  designation    String // e.g. "Assistant Professor", "Professor"
-  officeLocation String? // Optional — shown on student subject detail view
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  deletedAt      DateTime?
-
-  // Relations
+  id                       Int                       @id @default(autoincrement())
+  userId                   Int                       @unique
+  schoolId                 Int
+  departmentId             Int
+  createdAt                DateTime                  @default(now())
+  deletedAt                DateTime?
+  designation              String
+  updatedAt                DateTime                  @updatedAt
+  officeLocation           String?
   school                   School                    @relation(fields: [schoolId], references: [id])
   department               Department                @relation(fields: [departmentId], references: [id])
   user                     User                      @relation(fields: [userId], references: [id])
@@ -216,43 +158,32 @@ model Faculty {
   @@map("faculty")
 }
 
-// =============================================================================
-// 3. AUTH
-// =============================================================================
-
-// Stores hashed refresh tokens for JWT rotation.
-// `family` groups tokens from the same login session —
-// if a revoked token in a family is replayed, the entire family is revoked (reuse detection).
 model RefreshToken {
   id         Int       @id @default(autoincrement())
   userId     Int
-  tokenHash  String    @unique // SHA-256 hash of the raw token — never store raw
-  family     String // UUID assigned at login, shared across rotations
+  tokenHash  String    @unique
   deviceName String?
   ipAddress  String?
   expiresAt  DateTime
-  revokedAt  DateTime? // Null = valid. Set = revoked.
+  revokedAt  DateTime?
   createdAt  DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  family     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("refresh_tokens")
 }
 
-// OTP records for email verification and password reset.
-// One-time use — usedAt is set when consumed.
 model OtpVerification {
   id        Int       @id @default(autoincrement())
   userId    Int
   email     String
-  otpCode   String // Hashed OTP — never store plaintext
+  otpCode   String
   otpType   OtpType
   expiresAt DateTime
-  usedAt    DateTime? // Null = not yet used
+  usedAt    DateTime?
   createdAt DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([email])
@@ -260,49 +191,35 @@ model OtpVerification {
   @@map("otp_verifications")
 }
 
-// Immutable audit trail — records every significant auth event.
-// Never update or delete rows here.
 model AuditLog {
   id        Int      @id @default(autoincrement())
-  userId    Int? // Null for failed login attempts where user is unknown
-  schoolId  Int?
-  action    String // e.g. LOGIN_SUCCESS, TOKEN_REUSE_DETECTED, LOGOUT
-  ipAddress String?
-  userAgent String?
-  metadata  Json? // Extra context — e.g. { failedAttempts: 3 }
+  userId    Int?
+  action    String
+  metadata  Json?
   createdAt DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id])
+  ipAddress String?
+  schoolId  Int?
+  userAgent String?
+  user      User?    @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([schoolId])
   @@map("audit_logs")
 }
 
-// =============================================================================
-// 4. ACADEMIC CORE
-// =============================================================================
-
-// Academic Session — the top-level wrapper for all academic activity.
-// Everything (courses, assignments, results, timetables, attendance) links to a session.
-// Example: "2026-27 Odd Semester", "2026-27 Even Semester"
-// Status lifecycle: upcoming → active → completed → archived (no going back)
-// Archived sessions are read-only — all write operations must be rejected.
 model AcademicSession {
-  id              Int           @id @default(autoincrement())
-  schoolId        Int
-  departmentId    Int
-  name            String // Human-readable e.g. "2026-27 Odd Semester"
-  academicYear    String // e.g. "2026-27"
-  semesterType    SemesterType // odd | even
-  startDate       DateTime
-  endDate         DateTime
-  status          SessionStatus @default(upcoming)
-  createdByUserId Int // FK → User (HOD or Admin who created it)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  // Relations
+  id                   Int                          @id @default(autoincrement())
+  schoolId             Int
+  departmentId         Int
+  name                 String
+  academicYear         String
+  semesterType         SemesterType
+  startDate            DateTime
+  endDate              DateTime
+  status               SessionStatus                @default(upcoming)
+  createdByUserId      Int
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
   school               School                       @relation(fields: [schoolId], references: [id])
   department           Department                   @relation(fields: [departmentId], references: [id])
   courseOfferings      CourseOffering[]
@@ -320,44 +237,35 @@ model AcademicSession {
   @@map("academic_sessions")
 }
 
-// Semester reference table — semester numbers (1–8) with a display name.
-// Used as a lightweight reference, not tied to a session directly.
-// Session-level semester context comes from CourseOffering.semesterNumber.
 model Semester {
-  id             Int      @id @default(autoincrement())
+  id             Int           @id @default(autoincrement())
   schoolId       Int
-  semesterNumber Int // 1 to 8
-  name           String // e.g. "Semester 1", "First Year - Odd"
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  school       School        @relation(fields: [schoolId], references: [id])
-  cgpaRecords  CgpaRecord[]
-  subjectMarks SubjectMark[]
+  semesterNumber Int
+  name           String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  school         School        @relation(fields: [schoolId], references: [id])
+  cgpaRecords    CgpaRecord[]
+  subjectMarks   SubjectMark[]
 
   @@unique([schoolId, semesterNumber])
   @@index([schoolId])
   @@map("semesters")
 }
 
-// Subject/Course. Identified by courseCode (assigned by HOD), not just name.
-// Different departments can have same subject name — courseCode keeps them distinct.
-// Example: Mathematics in EE dept = "EE101", in ME dept = "ME101"
 model Subject {
-  id           Int         @id @default(autoincrement())
-  schoolId     Int
-  departmentId Int // Subject belongs to a department — scoped by HOD
-  courseCode   String // Unique per department e.g. "EE301". Assigned by HOD.
-  name         String
-  credits      Int         @default(3)
-  subjectType  SubjectType @default(theory) // theory | lab | tutorial
-  passingMarks Float       @default(40) // Used to derive pass/fail on result view
-  totalMarks   Float       @default(100)
-  isActive     Boolean     @default(true) // HOD can deactivate — hidden from all views
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-
-  // Relations
+  id                       Int                       @id @default(autoincrement())
+  schoolId                 Int
+  name                     String
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  courseCode               String
+  credits                  Int                       @default(3)
+  departmentId             Int
+  isActive                 Boolean                   @default(true)
+  passingMarks             Float                     @default(40)
+  subjectType              SubjectType               @default(theory)
+  totalMarks               Float                     @default(100)
   school                   School                    @relation(fields: [schoolId], references: [id])
   department               Department                @relation(fields: [departmentId], references: [id])
   subjectMarks             SubjectMark[]
@@ -370,201 +278,160 @@ model Subject {
   syllabus                 Syllabus?
   facultyResultSubmissions FacultyResultSubmission[]
 
-  @@unique([departmentId, courseCode]) // courseCode unique within a department
+  @@unique([departmentId, courseCode])
   @@index([schoolId])
   @@index([departmentId])
   @@map("subjects")
 }
 
-// Defines which subjects are offered in a specific session for a specific batch.
-// Only offered courses appear in faculty assignment, timetable, result management,
-// and student dashboard. HOD controls this per session.
 model CourseOffering {
-  id             Int      @id @default(autoincrement())
+  id             Int             @id @default(autoincrement())
   schoolId       Int
-  sessionId      Int // FK → AcademicSession
-  subjectId      Int // FK → Subject
+  sessionId      Int
+  subjectId      Int
   departmentId   Int
-  semesterNumber Int // Which semester this subject is offered in this session
-  batchYear      Int // Which batch year e.g. 2022
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  semesterNumber Int
+  batchYear      Int
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  school         School          @relation(fields: [schoolId], references: [id])
+  session        AcademicSession @relation(fields: [sessionId], references: [id])
+  subject        Subject         @relation(fields: [subjectId], references: [id])
 
-  school  School          @relation(fields: [schoolId], references: [id])
-  session AcademicSession @relation(fields: [sessionId], references: [id])
-  subject Subject         @relation(fields: [subjectId], references: [id])
-
-  @@unique([sessionId, subjectId, batchYear]) // Same subject can't be offered twice for same batch in same session
+  @@unique([sessionId, subjectId, batchYear])
   @@index([schoolId])
   @@index([sessionId])
   @@index([subjectId])
   @@map("course_offerings")
 }
 
-// Links a faculty member to a subject for a specific session + batch.
-// HOD creates these assignments. Faculty can only submit results for assigned subjects.
-// HOD can assign themselves if they are also teaching a subject.
 model FacultyAssignment {
-  id              Int      @id @default(autoincrement())
+  id              Int             @id @default(autoincrement())
   schoolId        Int
-  sessionId       Int // FK → AcademicSession
-  facultyId       Int // FK → Faculty
-  subjectId       Int // FK → Subject
+  sessionId       Int
+  facultyId       Int
+  subjectId       Int
   departmentId    Int
   semesterNumber  Int
   batchYear       Int
-  assignedByHodId Int // FK → User (HOD who created the assignment)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  assignedByHodId Int
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  school          School          @relation(fields: [schoolId], references: [id])
+  session         AcademicSession @relation(fields: [sessionId], references: [id])
+  faculty         Faculty         @relation(fields: [facultyId], references: [id])
+  subject         Subject         @relation(fields: [subjectId], references: [id])
 
-  school  School          @relation(fields: [schoolId], references: [id])
-  session AcademicSession @relation(fields: [sessionId], references: [id])
-  faculty Faculty         @relation(fields: [facultyId], references: [id])
-  subject Subject         @relation(fields: [subjectId], references: [id])
-
-  @@unique([sessionId, facultyId, subjectId, batchYear]) // One faculty per subject per batch per session
+  @@unique([sessionId, facultyId, subjectId, batchYear])
   @@index([schoolId])
   @@index([facultyId])
   @@index([sessionId])
   @@map("faculty_assignments")
 }
 
-// Enrolls a student in an academic session.
-// System auto-determines available subjects from CourseOffering
-// based on student's departmentId + batchYear + semesterNumber.
-// Status is updated after result publication (active → completed | detained).
 model StudentSessionRegistration {
   id             Int                @id @default(autoincrement())
   schoolId       Int
   studentId      Int
-  sessionId      Int // FK → AcademicSession
+  sessionId      Int
   semesterNumber Int
   batchYear      Int
   status         RegistrationStatus @default(active)
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
+  school         School             @relation(fields: [schoolId], references: [id])
+  student        Student            @relation(fields: [studentId], references: [id])
+  session        AcademicSession    @relation(fields: [sessionId], references: [id])
 
-  school  School          @relation(fields: [schoolId], references: [id])
-  student Student         @relation(fields: [studentId], references: [id])
-  session AcademicSession @relation(fields: [sessionId], references: [id])
-
-  @@unique([studentId, sessionId]) // One registration per student per session
+  @@unique([studentId, sessionId])
   @@index([schoolId])
   @@index([studentId])
   @@index([sessionId])
   @@map("student_session_registrations")
 }
 
-// Syllabus for a subject. Uploaded and versioned by HOD.
-// Students can view syllabus content, learning outcomes, and materials.
 model Syllabus {
   id               Int      @id @default(autoincrement())
   schoolId         Int
-  subjectId        Int      @unique // One syllabus per subject (replaced on update, not duplicated)
-  content          String   @db.LongText // Full syllabus text
+  subjectId        Int      @unique
+  content          String   @db.LongText
   learningOutcomes String?  @db.Text
-  syllabusUrl      String? // Link to uploaded PDF version
-  version          Int      @default(1) // Incremented on each update
-  uploadedByHodId  Int // FK → User (HOD)
+  syllabusUrl      String?
+  version          Int      @default(1)
+  uploadedByHodId  Int
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-
-  school    School   @relation(fields: [schoolId], references: [id])
-  subject   Subject  @relation(fields: [subjectId], references: [id])
-  faculty   Faculty? @relation(fields: [facultyId], references: [id])
-  facultyId Int?
+  facultyId        Int?
+  school           School   @relation(fields: [schoolId], references: [id])
+  subject          Subject  @relation(fields: [subjectId], references: [id])
+  faculty          Faculty? @relation(fields: [facultyId], references: [id])
 
   @@index([schoolId])
   @@map("syllabi")
 }
 
-// =============================================================================
-// 5. RESULTS
-// =============================================================================
-
-// One publication record = one semester's result for one batch in one department.
-// Created by HOD. Faculty submit marks against it. HOD reviews and publishes.
-//
-// Status lifecycle:
-//   draft        — HOD created it, faculty are uploading marks
-//   under_review — HOD has initiated review, can still unfreeze
-//   frozen       — No more faculty edits. HOD is doing final check.
-//   published    — Students can see results. CGPA is computed.
-//
-// Transition: draft → under_review → frozen → published
-//             frozen → under_review (HOD can unfreeze for corrections)
 model ResultPublication {
-  id               Int          @id @default(autoincrement())
-  schoolId         Int
-  sessionId        Int // FK → AcademicSession
-  departmentId     Int
-  batchYear        Int
-  semesterNumber   Int
-  status           ResultStatus @default(draft)
-  publishedByHodId Int? // FK → User. Set when status → published.
-  publishedAt      DateTime? // Set when status → published
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-
+  id                       Int                       @id @default(autoincrement())
+  schoolId                 Int
+  sessionId                Int
+  departmentId             Int
+  batchYear                Int
+  semesterNumber           Int
+  status                   ResultStatus              @default(draft)
+  publishedByHodId         Int?
+  publishedAt              DateTime?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
   school                   School                    @relation(fields: [schoolId], references: [id])
   session                  AcademicSession           @relation(fields: [sessionId], references: [id])
   facultyResultSubmissions FacultyResultSubmission[]
   subjectMarks             SubjectMark[]
 
-  // One publication per batch+semester per session per department
   @@unique([sessionId, departmentId, batchYear, semesterNumber])
   @@index([schoolId])
   @@index([sessionId])
   @@map("result_publications")
 }
 
-// Tracks whether each faculty has submitted marks for their assigned subject.
-// Auto-created when HOD creates a ResultPublication.
-// When ALL rows for a publication have isSubmitted=true → notify HOD that
-// compilation is complete and publication is ready for review.
 model FacultyResultSubmission {
-  id            Int       @id @default(autoincrement())
+  id            Int               @id @default(autoincrement())
   schoolId      Int
-  publicationId Int // FK → ResultPublication
-  facultyId     Int // FK → Faculty
-  subjectId     Int // FK → Subject
-  isSubmitted   Boolean   @default(false)
+  publicationId Int
+  facultyId     Int
+  subjectId     Int
+  isSubmitted   Boolean           @default(false)
   submittedAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  school        School            @relation(fields: [schoolId], references: [id])
+  publication   ResultPublication @relation(fields: [publicationId], references: [id])
+  faculty       Faculty           @relation(fields: [facultyId], references: [id])
+  subject       Subject           @relation(fields: [subjectId], references: [id])
 
-  school      School            @relation(fields: [schoolId], references: [id])
-  publication ResultPublication @relation(fields: [publicationId], references: [id])
-  faculty     Faculty           @relation(fields: [facultyId], references: [id])
-  subject     Subject           @relation(fields: [subjectId], references: [id])
-
-  @@unique([publicationId, subjectId]) // One submission record per subject per publication
+  @@unique([publicationId, subjectId])
   @@index([schoolId])
   @@index([publicationId])
   @@map("faculty_result_submissions")
 }
 
-// Individual student mark for one subject.
-// Pass/fail is derived at query time: marks >= subject.passingMarks → pass.
-// invalidatedAt: set when HOD approves a reappear — the original mark becomes
-//   invalid and is excluded from CGPA computation and student result views.
-// isReappear: true for marks submitted after a reappear application is approved.
 model SubjectMark {
-  id            Int       @id @default(autoincrement())
-  studentId     Int
-  semesterId    Int // FK → Semester (for CGPA grouping)
-  subjectId     Int
-  publicationId Int // FK → ResultPublication — marks visible only when publication is published
-  marks         Float
-  isReappear    Boolean   @default(false) // True for reappear exam marks
-  invalidatedAt DateTime? // Set when reappear approved — excludes this mark from result view
-  createdAt     DateTime  @default(now())
-
-  student     Student           @relation(fields: [studentId], references: [id])
-  semester    Semester          @relation(fields: [semesterId], references: [id])
-  subject     Subject           @relation(fields: [subjectId], references: [id])
-  publication ResultPublication @relation(fields: [publicationId], references: [id])
+  id              Int               @id @default(autoincrement())
+  studentId       Int
+  semesterId      Int
+  marks           Float
+  createdAt       DateTime          @default(now())
+  subjectId       Int
+  invalidatedAt   DateTime?
+  isReappear      Boolean           @default(false)
+  publicationId   Int
+  grade           String?
+  gradePoint      Float?
+  gradingSystemId Int?
+  student         Student           @relation(fields: [studentId], references: [id])
+  semester        Semester          @relation(fields: [semesterId], references: [id])
+  subject         Subject           @relation(fields: [subjectId], references: [id])
+  publication     ResultPublication @relation(fields: [publicationId], references: [id])
 
   @@index([studentId])
   @@index([semesterId])
@@ -573,18 +440,17 @@ model SubjectMark {
   @@map("subject_marks")
 }
 
-// Computed CGPA per student per semester. Upserted when HOD publishes a result.
-// classAverageCgpa is the department batch average at time of computation.
 model CgpaRecord {
   id               Int      @id @default(autoincrement())
   studentId        Int
   semesterId       Int
   cgpa             Float
-  classAverageCgpa Float // Batch average at time of result publication
+  classAverageCgpa Float
   createdAt        DateTime @default(now())
-
-  student  Student  @relation(fields: [studentId], references: [id])
-  semester Semester @relation(fields: [semesterId], references: [id])
+  sgpa             Float    @default(0)
+  totalCredits     Int      @default(0)
+  student          Student  @relation(fields: [studentId], references: [id])
+  semester         Semester @relation(fields: [semesterId], references: [id])
 
   @@unique([studentId, semesterId])
   @@index([studentId])
@@ -592,44 +458,25 @@ model CgpaRecord {
   @@map("cgpa_records")
 }
 
-// =============================================================================
-// 6. REAPPEAR
-// =============================================================================
-
-// Student applies for reappear when they fail a subject.
-// Only HOD (of student's department) can approve or reject.
-//
-// On approval:
-//   - Original SubjectMark.invalidatedAt is set (mark excluded from result)
-//   - Student's CGPA is recomputed
-//   - Student appears in faculty's reappear student list
-//   - Faculty submits new marks via the same result submission flow (isReappear=true)
-//   - CGPA recomputed again after new mark published
-//
-// Student cannot apply if:
-//   - Result not yet published
-//   - They passed the subject
-//   - A pending/approved application already exists for same subject+session
 model ReappearApplication {
-  id              Int            @id @default(autoincrement())
+  id              Int             @id @default(autoincrement())
   schoolId        Int
   studentId       Int
   subjectId       Int
   sessionId       Int
   semesterNumber  Int
-  reason          String         @db.Text // Student's explanation — required
-  status          ReappearStatus @default(pending)
-  hodComment      String? // HOD's note on approval or rejection
-  reviewedByHodId Int? // FK → Faculty (HOD is also a faculty)
+  reason          String          @db.Text
+  status          ReappearStatus  @default(pending)
+  hodComment      String?
+  reviewedByHodId Int?
   reviewedAt      DateTime?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  school     School          @relation(fields: [schoolId], references: [id])
-  student    Student         @relation(fields: [studentId], references: [id])
-  subject    Subject         @relation(fields: [subjectId], references: [id])
-  session    AcademicSession @relation(fields: [sessionId], references: [id])
-  reviewedBy Faculty?        @relation("ReappearReviewedBy", fields: [reviewedByHodId], references: [id])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  school          School          @relation(fields: [schoolId], references: [id])
+  student         Student         @relation(fields: [studentId], references: [id])
+  subject         Subject         @relation(fields: [subjectId], references: [id])
+  session         AcademicSession @relation(fields: [sessionId], references: [id])
+  reviewedBy      Faculty?        @relation("ReappearReviewedBy", fields: [reviewedByHodId], references: [id])
 
   @@index([schoolId])
   @@index([studentId])
@@ -637,20 +484,6 @@ model ReappearApplication {
   @@map("reappear_applications")
 }
 
-// =============================================================================
-// 7. TIMETABLE
-// =============================================================================
-
-// Department timetable for a session + batch + semester.
-// Created by HOD → submitted to Admin → approved → visible to students and faculty.
-//
-// Status lifecycle:
-//   draft     — HOD is building it
-//   submitted — sent to Admin for verification
-//   returned  — Admin returned with corrections needed
-//   approved  — Active. Students and faculty can view.
-//
-// Only slots from approved timetables are shown in student/faculty views.
 model Timetable {
   id                Int             @id @default(autoincrement())
   schoolId          Int
@@ -659,112 +492,88 @@ model Timetable {
   batchYear         Int
   semesterNumber    Int
   status            TimetableStatus @default(draft)
-  submittedAt       DateTime? // When HOD submitted to admin
-  approvedAt        DateTime? // When admin approved
-  adminComment      String? // Admin's comment when returning for correction
-  reviewedByAdminId Int? // FK → User (Admin who reviewed)
+  submittedAt       DateTime?
+  approvedAt        DateTime?
+  adminComment      String?
+  reviewedByAdminId Int?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
+  school            School          @relation(fields: [schoolId], references: [id])
+  session           AcademicSession @relation(fields: [sessionId], references: [id])
+  slots             TimetableSlot[]
 
-  school  School          @relation(fields: [schoolId], references: [id])
-  session AcademicSession @relation(fields: [sessionId], references: [id])
-  slots   TimetableSlot[]
-
-  // One timetable per batch+semester per session per department
   @@unique([sessionId, departmentId, batchYear, semesterNumber])
   @@index([schoolId])
   @@index([sessionId])
   @@map("timetables")
 }
 
-// Individual class slot within a timetable.
-// Conflict validation (faculty time conflict, room conflict) is done in service layer.
 model TimetableSlot {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   schoolId    Int
   timetableId Int
   subjectId   Int
   facultyId   Int
-  dayOfWeek   Int // 1=Monday, 2=Tuesday ... 7=Sunday
-  startTime   String // "09:00" — stored as HH:MM string
-  endTime     String // "10:00"
+  dayOfWeek   Int
+  startTime   String
+  endTime     String
   classroom   String
-  slotType    SlotType @default(lecture) // lecture | lab | tutorial
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  school    School    @relation(fields: [schoolId], references: [id])
-  timetable Timetable @relation(fields: [timetableId], references: [id], onDelete: Cascade)
-  subject   Subject   @relation(fields: [subjectId], references: [id])
-  faculty   Faculty   @relation(fields: [facultyId], references: [id])
+  slotType    SlotType  @default(lecture)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  school      School    @relation(fields: [schoolId], references: [id])
+  timetable   Timetable @relation(fields: [timetableId], references: [id], onDelete: Cascade)
+  subject     Subject   @relation(fields: [subjectId], references: [id])
+  faculty     Faculty   @relation(fields: [facultyId], references: [id])
 
   @@index([schoolId])
   @@index([timetableId])
   @@map("timetable_slots")
 }
 
-// =============================================================================
-// 8. ATTENDANCE
-// =============================================================================
-
-// Records attendance for one student for one subject on one date.
-// Marked by faculty (must be assigned to the subject via FacultyAssignment).
-// Edit allowed on same day only.
-// After each mark, service checks if student's attendance % dropped below 75%
-// → notify student with ATTENDANCE_SHORTAGE.
 model Attendance {
   id                Int              @id @default(autoincrement())
   schoolId          Int
   studentId         Int
   subjectId         Int
   sessionId         Int
-  facultyId         Int // Faculty who marked this record
-  date              DateTime // Date of the class
-  status            AttendanceStatus // present | absent | late | excused
-  markedByFacultyId Int // Redundant with facultyId for audit clarity
+  facultyId         Int
+  date              DateTime
+  status            AttendanceStatus
+  markedByFacultyId Int
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
+  school            School           @relation(fields: [schoolId], references: [id])
+  student           Student          @relation(fields: [studentId], references: [id])
+  subject           Subject          @relation(fields: [subjectId], references: [id])
+  session           AcademicSession  @relation(fields: [sessionId], references: [id])
+  faculty           Faculty          @relation(fields: [facultyId], references: [id])
 
-  school  School          @relation(fields: [schoolId], references: [id])
-  student Student         @relation(fields: [studentId], references: [id])
-  subject Subject         @relation(fields: [subjectId], references: [id])
-  session AcademicSession @relation(fields: [sessionId], references: [id])
-  faculty Faculty         @relation(fields: [facultyId], references: [id])
-
-  @@unique([studentId, subjectId, sessionId, date]) // One record per student per subject per date
+  @@unique([studentId, subjectId, sessionId, date])
   @@index([schoolId])
   @@index([studentId])
   @@index([subjectId, sessionId])
   @@map("attendance")
 }
 
-// =============================================================================
-// 9. INTERNAL ASSESSMENTS
-// =============================================================================
-
-// Internal marks uploaded by faculty per student per assessment type.
-// Types: quiz, assignment, midterm, lab, viva, practical.
-// On upload → notify all students in the subject: INTERNAL_MARKS_PUBLISHED.
-// Students can only view their own assessment records.
 model InternalAssessment {
-  id             Int            @id @default(autoincrement())
+  id             Int             @id @default(autoincrement())
   schoolId       Int
   studentId      Int
   subjectId      Int
   sessionId      Int
   facultyId      Int
   assessmentType AssessmentType
-  title          String // e.g. "Mid Term Exam 1", "Lab Assignment 3"
+  title          String
   marks          Float
-  maxMarks       Float // marks cannot exceed maxMarks — validated in service
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-
-  school  School          @relation(fields: [schoolId], references: [id])
-  student Student         @relation(fields: [studentId], references: [id])
-  subject Subject         @relation(fields: [subjectId], references: [id])
-  session AcademicSession @relation(fields: [sessionId], references: [id])
-  faculty Faculty         @relation(fields: [facultyId], references: [id])
+  maxMarks       Float
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  school         School          @relation(fields: [schoolId], references: [id])
+  student        Student         @relation(fields: [studentId], references: [id])
+  subject        Subject         @relation(fields: [subjectId], references: [id])
+  session        AcademicSession @relation(fields: [sessionId], references: [id])
+  faculty        Faculty         @relation(fields: [facultyId], references: [id])
 
   @@index([schoolId])
   @@index([studentId])
@@ -772,76 +581,58 @@ model InternalAssessment {
   @@map("internal_assessments")
 }
 
-// =============================================================================
-// 10. STUDENT PROFILE
-// =============================================================================
-
-// Student's technical/soft skills. Self-managed by student.
 model Skill {
   id        Int        @id @default(autoincrement())
   studentId Int
   skillName String
-  category  String // e.g. "Programming", "Design", "Management"
-  level     SkillLevel // beginner | intermediate | advanced | expert
+  category  String
   createdAt DateTime   @default(now())
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  level     SkillLevel
+  student   Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId])
   @@map("skills")
 }
 
-// Projects built by the student. Soft-deleted (deletedAt) not hard-deleted.
-// techStack stored as JSON array of strings e.g. ["React", "Node.js", "MySQL"]
 model Project {
   id          Int       @id @default(autoincrement())
   studentId   Int
   title       String
   description String?
-  techStack   Json? // Array of strings — ["React", "Node.js"]
   githubLink  String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+  endDate     DateTime?
   liveUrl     String?
   startDate   DateTime?
-  endDate     DateTime?
-  createdAt   DateTime  @default(now())
+  techStack   Json?
   updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime? // Soft delete — never hard delete
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student     Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId])
   @@map("projects")
 }
 
-// =============================================================================
-// 11. ACHIEVEMENTS, INTERNSHIPS, PLACEMENTS
-// =============================================================================
-
-// Student-uploaded achievement (hackathon win, certification, competition, etc.)
-// Any faculty can review and approve/reject (not dept-scoped).
-// Linked to an AcademicSession optionally — for session-context display.
-// Internship offer letters can link to an Achievement for verification.
 model Achievement {
   id                  Int               @id @default(autoincrement())
   studentId           Int
-  sessionId           Int? // Optional link to academic session
+  verifiedBy          Int?
   title               String
-  category            String // e.g. "technical", "sports", "cultural"
-  description         String?
-  certificateUrl      String? // URL to uploaded certificate (Cloudinary/S3)
-  proofUrl            String? // Additional proof document URL
+  category            String
   status              AchievementStatus @default(pending)
-  verifiedBy          Int? // FK → Faculty who reviewed
-  verificationComment String?
   rejectionReason     String?
-  verifiedAt          DateTime?
+  certificateUrl      String?
   createdAt           DateTime          @default(now())
+  description         String?
+  proofUrl            String?
   updatedAt           DateTime          @updatedAt
-
-  student    Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  session    AcademicSession? @relation(fields: [sessionId], references: [id])
-  faculty    Faculty?         @relation("VerifiedBy", fields: [verifiedBy], references: [id])
-  internship Internship? // One internship can link back to this achievement
+  verificationComment String?
+  verifiedAt          DateTime?
+  sessionId           Int?
+  student             Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  session             AcademicSession?  @relation(fields: [sessionId], references: [id])
+  faculty             Faculty?          @relation("VerifiedBy", fields: [verifiedBy], references: [id])
+  internship          Internship?
 
   @@index([studentId])
   @@index([verifiedBy], map: "achievements_verifiedBy_fkey")
@@ -849,99 +640,103 @@ model Achievement {
   @@map("achievements")
 }
 
-// Student internship record. Can optionally link to an Achievement
-// (e.g. offer letter uploaded as an achievement for faculty verification).
-// Verification status is derived from the linked achievement's status.
 model Internship {
-  id             Int       @id @default(autoincrement())
+  id             Int          @id @default(autoincrement())
   studentId      Int
-  achievementId  Int?      @unique // Optional FK → Achievement. @unique = one internship per achievement.
+  achievementId  Int?         @unique
   companyName    String
   role           String
-  startDate      DateTime?
+  certificateUrl String?
+  createdAt      DateTime     @default(now())
   endDate        DateTime?
+  offerLetterUrl String?
+  startDate      DateTime?
   stipend        Float?
-  offerLetterUrl String? // URL to offer letter (Cloudinary/S3)
-  certificateUrl String? // URL to completion certificate
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  student     Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  achievement Achievement? @relation(fields: [achievementId], references: [id])
+  updatedAt      DateTime     @updatedAt
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  achievement    Achievement? @relation(fields: [achievementId], references: [id])
 
   @@index([studentId])
   @@map("internships")
 }
 
-// Placement record — set when student gets placed.
-// Setting a Placement also flips Student.isPlaced = true (done in service layer).
 model Placement {
   id             Int      @id @default(autoincrement())
   studentId      Int
   companyName    String
   role           String
-  packageLpa     Float // Annual package in LPA (Lakhs Per Annum)
+  packageLpa     Float
   offerLetterUrl String?
   joined         Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student        Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId])
   @@map("placements")
 }
 
-// =============================================================================
-// 12. COMMUNICATION
-// =============================================================================
-
-// In-app notifications for all users.
-// Written by service layer at every state change (result publish, reappear approve, etc.)
-// type is a string constant e.g. "RESULT_PUBLISHED", "REAPPEAR_APPROVED"
-// link is an optional deep-link for the frontend to navigate on tap.
 model Notification {
   id        Int       @id @default(autoincrement())
   userId    Int
-  type      String // Notification type constant
-  message   String // Human-readable message shown in notification list
-  link      String? // Frontend route e.g. "/results/session/3"
+  type      String
+  message   String
   isRead    Boolean   @default(false)
-  readAt    DateTime?
   createdAt DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  link      String?
+  readAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([userId, isRead]) // Optimises unread count queries
+  @@index([userId, isRead])
   @@map("notifications")
 }
 
-// Department announcements posted by faculty or HOD.
-// Visible to all students in the department.
 model Announcement {
-  id           Int       @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   facultyId    Int
   departmentId Int
   title        String
-  content      String    @db.Text
-  expiresAt    DateTime? // Null = never expires
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  faculty    Faculty    @relation(fields: [facultyId], references: [id])
-  department Department @relation(fields: [departmentId], references: [id])
+  content      String     @db.Text
+  createdAt    DateTime   @default(now())
+  expiresAt    DateTime?
+  updatedAt    DateTime   @updatedAt
+  faculty      Faculty    @relation(fields: [facultyId], references: [id])
+  department   Department @relation(fields: [departmentId], references: [id])
 
   @@index([departmentId])
   @@index([facultyId], map: "announcements_facultyId_fkey")
   @@map("announcements")
 }
 
-// =============================================================================
-// ENUMS
-// =============================================================================
+model GradingSystem {
+  id        Int         @id @default(autoincrement())
+  schoolId  Int?
+  name      String
+  isDefault Boolean     @default(false)
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  school    School?     @relation(fields: [schoolId], references: [id])
+  rules     GradeRule[]
 
-// User roles. HOD is also a faculty — Faculty record exists for HOD users.
+  @@index([schoolId])
+  @@map("grading_systems")
+}
+
+model GradeRule {
+  id              Int           @id @default(autoincrement())
+  gradingSystemId Int
+  grade           String
+  gradePoint      Float
+  minMarksPercent Float
+  maxMarksPercent Float
+  gradingSystem   GradingSystem @relation(fields: [gradingSystemId], references: [id], onDelete: Cascade)
+
+  @@index([gradingSystemId])
+  @@map("grade_rules")
+}
+
 enum Role {
   student
   faculty
@@ -949,14 +744,11 @@ enum Role {
   admin
 }
 
-// Academic session semester type — determines odd/even semester subjects offered.
 enum SemesterType {
   odd
   even
 }
 
-// Session lifecycle. Transitions are one-way except frozen → under_review.
-// archived sessions are fully read-only.
 enum SessionStatus {
   upcoming
   active
@@ -964,24 +756,18 @@ enum SessionStatus {
   archived
 }
 
-// Subject delivery format.
 enum SubjectType {
   theory
   lab
   tutorial
 }
 
-// Student's registration status in a session.
-// Updated by promotion logic after result publication.
 enum RegistrationStatus {
-  active // Currently enrolled
-  completed // Passed all subjects, promoted to next semester
-  detained // Failed one or more subjects, not promoted
+  active
+  completed
+  detained
 }
 
-// Result publication lifecycle.
-// draft → under_review → frozen → published
-// frozen → under_review (HOD can unfreeze for corrections)
 enum ResultStatus {
   draft
   under_review
@@ -989,14 +775,12 @@ enum ResultStatus {
   published
 }
 
-// Reappear application lifecycle.
 enum ReappearStatus {
   pending
   approved
   rejected
 }
 
-// Timetable approval lifecycle.
 enum TimetableStatus {
   draft
   submitted
@@ -1004,14 +788,12 @@ enum TimetableStatus {
   approved
 }
 
-// Type of class slot in timetable.
 enum SlotType {
   lecture
   lab
   tutorial
 }
 
-// Attendance status per class per student.
 enum AttendanceStatus {
   present
   absent
@@ -1019,7 +801,6 @@ enum AttendanceStatus {
   excused
 }
 
-// Internal assessment types.
 enum AssessmentType {
   quiz
   assignment
@@ -1029,21 +810,18 @@ enum AssessmentType {
   practical
 }
 
-// Achievement verification status.
 enum AchievementStatus {
   pending
   approved
   rejected
 }
 
-// OTP use cases.
 enum OtpType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
   LOGIN_VERIFICATION
 }
 
-// Skill proficiency levels.
 enum SkillLevel {
   beginner
   intermediate
