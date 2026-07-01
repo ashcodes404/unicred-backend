@@ -9,8 +9,8 @@ const app = express();
 
 app.use(
   cors({
-    origin:true , // your frontend's URL
-    credentials: true, // REQUIRED so the browser sends/receives cookies
+    origin: "http://localhost:3000", // Vite frontend
+    credentials: true,
   })
 );
 app.use(express.json());

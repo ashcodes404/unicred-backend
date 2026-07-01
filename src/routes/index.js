@@ -53,6 +53,7 @@ const reappearRoutes       =    require("../modules/reappear/reappear.routes");
 const studentResultRoutes  =    require("../modules/results/student-results.routes");
 const achievementRoutes    =    require("../modules/achievements/achievements.routes");
 const internshipRoutes     =    require("../modules/internships/internships.routes");
+const uploadRoutes         =    require("../modules/uploads/uploads.routes");
 
 /*
 |--------------------------------------------------------------------------
@@ -107,6 +108,9 @@ router.use("/achievements", achievementRoutes);
 
 // Internships — students add (optionally linked to an achievement), HOD views
 router.use("/internships", internshipRoutes);
+
+// Uploads — generic Cloudinary file upload (certificates, proofs, offer letters)
+router.use("/uploads", uploadRoutes);
  
  
 

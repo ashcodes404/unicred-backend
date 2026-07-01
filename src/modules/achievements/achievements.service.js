@@ -25,7 +25,12 @@ const { notify, notifyMany } = require("../../utils/notify");
 const NOTIFICATION_TYPES = require("../../constants/notificationTypes");
 const { isNonEmptyString, isValidUrl } = require("../../utils/validators");
 
-const ACHIEVEMENT_LINK = (id) => `/achievements/${id}`;
+// Notification deep-links must point at REAL frontend routes, and those
+// differ by recipient role:
+//   - faculty/HOD reviewers open the review screen
+//   - the owning student opens their own achievement detail
+const FACULTY_REVIEW_LINK      = (id) => `/faculty/achievements/${id}/review`;
+const STUDENT_ACHIEVEMENT_LINK = (id) => `/student/achievements/${id}`;
 
 // -----------------------------------------------------------------------------
 // Small pure helpers
@@ -173,7 +178,7 @@ async function createAchievement(student, body) {
     facultyUserIds,
     NOTIFICATION_TYPES.ACHIEVEMENT_REVIEW_REQUESTED,
     `A student asked you to verify the achievement "${title.trim()}".`,
-    ACHIEVEMENT_LINK(created.id)
+    FACULTY_REVIEW_LINK(created.id)
   );
 
   // Return the full record (with its fresh review rows).
@@ -279,7 +284,7 @@ async function addReviewers(achievementId, student, facultyIdsRaw) {
     newUserIds,
     NOTIFICATION_TYPES.ACHIEVEMENT_REVIEW_REQUESTED,
     `A student asked you to verify the achievement "${existing.title}".`,
-    ACHIEVEMENT_LINK(id)
+    FACULTY_REVIEW_LINK(id)
   );
 
   return repo.findByIdForStudent(id, student.id);
@@ -478,7 +483,7 @@ async function verifyAchievement(achievementId, facultyId, remark) {
     achievement.student.user.id,
     NOTIFICATION_TYPES.ACHIEVEMENT_APPROVED,
     `Your achievement "${achievement.title}" was approved.`,
-    ACHIEVEMENT_LINK(id)
+    STUDENT_ACHIEVEMENT_LINK(id)
   );
 
   return { overallStatus: overall, message: "Your approval was recorded." };
@@ -503,7 +508,7 @@ async function rejectAchievement(achievementId, facultyId, remark) {
       achievement.student.user.id,
       NOTIFICATION_TYPES.ACHIEVEMENT_REJECTED,
       `Your achievement "${achievement.title}" was rejected: ${remark.trim()}`,
-      ACHIEVEMENT_LINK(id)
+      STUDENT_ACHIEVEMENT_LINK(id)
     );
   }
 
