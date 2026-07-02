@@ -54,14 +54,41 @@ const getDepartmentTimetables = asyncHandler(async (req, res) => {
 
 /**
  * GET /api/timetables/:id
- * Anyone in the school can view a single timetable with its slots.
+ * View a single timetable with its slots — scoped to the caller's own
+ * department (admins may view any). The service enforces the rule.
  */
 const getTimetableById = asyncHandler(async (req, res) => {
-  const timetable = await service.getTimetableById(
-    req.params.id,
-    req.user.schoolId,
-  );
+  const timetable = await service.getTimetableById(req.params.id, req.user);
   return success(res, 200, "Timetable fetched.", timetable);
+});
+
+// -----------------------------------------------------------------------------
+// DEPARTMENT TIMETABLE DOCUMENT (uploaded PDF/image)
+// -----------------------------------------------------------------------------
+
+/**
+ * PUT /api/timetables/document
+ * HOD uploads (or replaces) their department's timetable file.
+ * departmentId comes from req.faculty (facultyContext), never the body.
+ * Body: { fileUrl }  (Cloudinary URL from POST /api/uploads)
+ */
+const uploadTimetableDocument = asyncHandler(async (req, res) => {
+  const doc = await service.setDepartmentTimetableDocument(
+    req.user.schoolId,
+    req.faculty.departmentId,
+    req.body.fileUrl,
+    req.user.userId,
+  );
+  return success(res, 200, "Timetable uploaded.", doc);
+});
+
+/**
+ * GET /api/timetables/document
+ * HOD, faculty, or student fetches THEIR OWN department's timetable file.
+ */
+const getTimetableDocument = asyncHandler(async (req, res) => {
+  const doc = await service.getDepartmentTimetableDocument(req.user);
+  return success(res, 200, "Timetable fetched.", doc);
 });
 
 /**
@@ -197,6 +224,8 @@ module.exports = {
   createTimetable,
   getDepartmentTimetables,
   getTimetableById,
+  uploadTimetableDocument,
+  getTimetableDocument,
   updateTimetable,
   addSlot,
   updateSlot,

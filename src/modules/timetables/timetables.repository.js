@@ -362,6 +362,43 @@ async function deleteSlot(slotId, schoolId) {
 }
 
 // =============================================================================
+// DEPARTMENT TIMETABLE DOCUMENT (uploaded PDF/image — one per department)
+// =============================================================================
+
+/**
+ * upsertDepartmentDocument — create or replace a department's timetable file.
+ * departmentId is unique, so a second upload overwrites the first.
+ *
+ * @param {number} schoolId
+ * @param {number} departmentId
+ * @param {string} fileUrl
+ * @param {number} uploadedById  user id of the HOD
+ * @returns {Promise<Object>}
+ */
+async function upsertDepartmentDocument(schoolId, departmentId, fileUrl, uploadedById) {
+  return prisma.departmentTimetable.upsert({
+    where:  { departmentId },
+    update: { fileUrl, uploadedById, schoolId },
+    create: { schoolId, departmentId, fileUrl, uploadedById },
+  });
+}
+
+/**
+ * findDepartmentDocument — the current timetable file for one department, or
+ * null if the HOD hasn't uploaded one yet.
+ *
+ * @param {number} schoolId
+ * @param {number} departmentId
+ * @returns {Promise<Object|null>}
+ */
+async function findDepartmentDocument(schoolId, departmentId) {
+  return prisma.departmentTimetable.findFirst({
+    where: { schoolId, departmentId },
+    select: { id: true, departmentId: true, fileUrl: true, updatedAt: true },
+  });
+}
+
+// =============================================================================
 // EXPORTS — make these functions available to the service layer.
 // =============================================================================
 
@@ -369,6 +406,8 @@ module.exports = {
   createTimetable,
   findById,
   findAllByDepartment,
+  upsertDepartmentDocument,
+  findDepartmentDocument,
   findDuplicate,
   updateTimetable,
   findAllByStatus,

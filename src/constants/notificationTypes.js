@@ -18,6 +18,10 @@ const NOTIFICATION_TYPES = {
   TIMETABLE_APPROVED: "TIMETABLE_APPROVED",
   TIMETABLE_RETURNED: "TIMETABLE_RETURNED",
 
+  // Sent to every faculty + student of a department (except the uploading HOD)
+  // when the HOD uploads/replaces their department's timetable file.
+  TIMETABLE_UPLOADED: "TIMETABLE_UPLOADED",
+
   HOLIDAY_DECLARED: "HOLIDAY_DECLARED",
   HALF_DAY_DECLARED: "HALF_DAY_DECLARED",
 

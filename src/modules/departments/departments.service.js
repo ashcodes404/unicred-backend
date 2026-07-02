@@ -404,6 +404,9 @@ async function updateDepartment(
  *
  * 1. Verify department exists
  * 2. Soft delete
+ * 3. Reconcile the ex-HOD's role — deleting the department removes their
+ *    headship, so if they now head nothing they must be demoted to faculty
+ *    (otherwise they'd keep the HOD role + interface while leading nothing).
  */
 async function deleteDepartment(
   departmentId,
@@ -421,8 +424,19 @@ async function deleteDepartment(
     );
   }
 
+  // Remember who headed it, so we can demote them after the delete.
+  const previousHodUserId =
+    existingDepartment.hodUserId;
+
   await departmentRepository.deleteDepartment(
     departmentId,
+    schoolId
+  );
+
+  // The headship is gone — demote the old HOD to faculty if they now head
+  // no active department. reconcileHodRole no-ops on null / still-heading.
+  await reconcileHodRole(
+    previousHodUserId,
     schoolId
   );
 

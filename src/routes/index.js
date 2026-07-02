@@ -54,6 +54,7 @@ const studentResultRoutes  =    require("../modules/results/student-results.rout
 const achievementRoutes    =    require("../modules/achievements/achievements.routes");
 const internshipRoutes     =    require("../modules/internships/internships.routes");
 const uploadRoutes         =    require("../modules/uploads/uploads.routes");
+const syllabusRoutes       =    require("../modules/syllabus/syllabus.routes");
 const timetableRoutes      =    require("../modules/timetables/timetables.routes");
 const adminTimetableRoutes =    require("../modules/timetables/timetables.admin.routes");
 const scheduleExceptionRoutes = require("../modules/schedule-exceptions/schedule-exceptions.routes");
@@ -114,6 +115,9 @@ router.use("/internships", internshipRoutes);
 
 // Uploads — generic Cloudinary file upload (certificates, proofs, offer letters)
 router.use("/uploads", uploadRoutes);
+
+// Syllabus — HOD uploads per-subject syllabus files; dept faculty/students view
+router.use("/syllabus", syllabusRoutes);
 
 // Timetables — HOD builds the weekly schedule, submits for approval
 router.use("/timetables", timetableRoutes);

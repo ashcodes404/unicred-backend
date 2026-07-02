@@ -22,6 +22,7 @@ const prisma      = require("../../config/db"); // used for cross-table lookups
 const AppError    = require("../../utils/AppError");
 const { notify, notifyMany } = require("../../utils/notify");
 const { isValidTime, timesOverlap, isEndAfterStart } = require("../../utils/time");
+const { isValidUrl } = require("../../utils/validators");
 const NOTIFICATION_TYPES = require("../../constants/notificationTypes");
 
 // dayOfWeek uses ISO numbering: 1 = Monday ... 7 = Sunday.
@@ -176,11 +177,129 @@ async function getDepartmentTimetables(schoolId, departmentId, query) {
 }
 
 /**
- * getTimetableById — anyone in the school may read one timetable by id.
- * School isolation is enforced inside the repository.
+ * getTimetableById — read one timetable by id, scoped to the caller's
+ * department so a user can never open another department's timetable.
+ *   - admin           : any timetable in the school
+ *   - hod / faculty    : only their own department's
+ *   - student          : only their own department's, and only once approved
+ *
+ * @param {number|string} id
+ * @param {{ userId:number, role:string, schoolId:number }} user
  */
-async function getTimetableById(id, schoolId) {
-  return getTimetableOr404(parseInt(id), schoolId);
+async function getTimetableById(id, user) {
+  const timetable = await getTimetableOr404(parseInt(id), user.schoolId);
+
+  // Admins oversee every department in their school.
+  if (user.role === "admin") return timetable;
+
+  const departmentId = await resolveUserDepartmentId(user);
+
+  if (!departmentId || departmentId !== timetable.departmentId) {
+    throw new AppError(403, "This timetable belongs to another department.");
+  }
+
+  // Students and faculty only ever see a published (approved) timetable —
+  // drafts and pending-approval versions stay with the HOD and admin.
+  if (user.role !== "hod" && timetable.status !== "approved") {
+    throw new AppError(403, "This timetable has not been published yet.");
+  }
+
+  return timetable;
+}
+
+/**
+ * resolveUserDepartmentId — find the department a non-admin user belongs to.
+ * HOD/faculty come from the Faculty table; students from the Student table.
+ * Returns null for admins (they aren't tied to one department) or if missing.
+ *
+ * @param {{ userId:number, role:string, schoolId:number }} user
+ * @returns {Promise<number|null>}
+ */
+async function resolveUserDepartmentId(user) {
+  if (user.role === "hod" || user.role === "faculty") {
+    const faculty = await prisma.faculty.findFirst({
+      where: { userId: user.userId, schoolId: user.schoolId },
+      select: { departmentId: true },
+    });
+    return faculty?.departmentId ?? null;
+  }
+  if (user.role === "student") {
+    const student = await prisma.student.findFirst({
+      where: { userId: user.userId, schoolId: user.schoolId },
+      select: { departmentId: true },
+    });
+    return student?.departmentId ?? null;
+  }
+  return null;
+}
+
+// =============================================================================
+// DEPARTMENT TIMETABLE DOCUMENT (uploaded PDF/image)
+// =============================================================================
+
+/**
+ * setDepartmentTimetableDocument — HOD uploads (or replaces) their department's
+ * timetable file. departmentId comes from the HOD's own record, never the body,
+ * so a HOD can only ever set their OWN department's timetable.
+ *
+ * @param {number} schoolId
+ * @param {number} departmentId
+ * @param {string} fileUrl      Cloudinary URL of the uploaded PDF/image
+ * @param {number} uploadedById HOD's user id
+ */
+async function setDepartmentTimetableDocument(schoolId, departmentId, fileUrl, uploadedById) {
+  if (!fileUrl || !isValidUrl(fileUrl)) {
+    throw new AppError(400, "A valid uploaded file URL is required.");
+  }
+
+  const doc = await repo.upsertDepartmentDocument(schoolId, departmentId, fileUrl, uploadedById);
+
+  // Notify everyone in the department that a new timetable is available —
+  // all faculty and students of the department, but NOT the HOD who just
+  // uploaded it. Faculty and students have different timetable pages, so
+  // each group gets a link to its own.
+  const [faculty, students] = await Promise.all([
+    prisma.faculty.findMany({
+      where: { schoolId, departmentId, deletedAt: null, userId: { not: uploadedById } },
+      select: { userId: true },
+    }),
+    prisma.student.findMany({
+      where: { schoolId, departmentId, deletedAt: null },
+      select: { userId: true },
+    }),
+  ]);
+
+  const message = "A new timetable has been uploaded for your department.";
+  await notifyMany(
+    faculty.map((f) => f.userId),
+    NOTIFICATION_TYPES.TIMETABLE_UPLOADED,
+    message,
+    "/faculty/timetable",
+  );
+  await notifyMany(
+    students.map((s) => s.userId),
+    NOTIFICATION_TYPES.TIMETABLE_UPLOADED,
+    message,
+    "/student/timetable",
+  );
+
+  return doc;
+}
+
+/**
+ * getDepartmentTimetableDocument — the timetable file for the CALLER's own
+ * department. Works for HOD, faculty, and students; each only ever sees their
+ * own department's document. Returns null when nothing has been uploaded.
+ *
+ * @param {{ userId:number, role:string, schoolId:number }} user
+ * @returns {Promise<Object|null>}
+ */
+async function getDepartmentTimetableDocument(user) {
+  const departmentId = await resolveUserDepartmentId(user);
+  if (!departmentId) {
+    throw new AppError(403, "No department is associated with your account.");
+  }
+  return repo.findDepartmentDocument(user.schoolId, departmentId);
 }
 
 // =============================================================================
@@ -616,6 +735,8 @@ module.exports = {
   createTimetable,
   getDepartmentTimetables,
   getTimetableById,
+  setDepartmentTimetableDocument,
+  getDepartmentTimetableDocument,
   updateTimetable,
   addSlot,
   updateSlot,

@@ -189,6 +189,15 @@ async function updateInternship(internshipId, studentId, body) {
     throw new AppError(404, "Internship not found.");
   }
 
+  // Once the linked achievement is approved, the internship is verified and
+  // locked — editing it would undermine that verification.
+  if (existing.achievement && existing.achievement.status === "approved") {
+    throw new AppError(
+      409,
+      "This internship is verified through an approved achievement and can no longer be edited.",
+    );
+  }
+
   const allowed = [
     "companyName", "role", "startDate", "endDate",
     "stipend", "offerLetterUrl", "certificateUrl",
@@ -254,6 +263,14 @@ async function deleteInternship(internshipId, studentId) {
   const existing = await repo.findByIdForStudent(id, studentId);
   if (!existing) {
     throw new AppError(404, "Internship not found.");
+  }
+
+  // A verified (approved-achievement) internship is locked — can't be deleted.
+  if (existing.achievement && existing.achievement.status === "approved") {
+    throw new AppError(
+      409,
+      "This internship is verified through an approved achievement and can no longer be deleted.",
+    );
   }
 
   await repo.deleteById(id);

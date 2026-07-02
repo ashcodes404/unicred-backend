@@ -380,6 +380,28 @@ model Syllabus {
   @@map("syllabi")
 }
 
+// One uploaded syllabus file (PDF/image) for a subject. Unlike the rich
+// `Syllabus` model above (one-to-one, text + single URL), a subject can have
+// MANY of these — the HOD uploads one or more files per course. Scalar FK
+// columns only (relationMode = "prisma"). departmentId is denormalised from
+// the subject so faculty/student reads can be scoped without an extra join.
+model SyllabusFile {
+  id           Int      @id @default(autoincrement())
+  schoolId     Int
+  departmentId Int
+  subjectId    Int
+  fileUrl      String   @db.Text
+  title        String?
+  uploadedById Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([schoolId])
+  @@index([departmentId])
+  @@index([subjectId])
+  @@map("syllabus_files")
+}
+
 model ResultPublication {
   id                       Int                       @id @default(autoincrement())
   schoolId                 Int
@@ -539,6 +561,23 @@ model TimetableSlot {
   @@index([schoolId])
   @@index([timetableId])
   @@map("timetable_slots")
+}
+
+// A HOD simply uploads a PDF/image of their department's timetable; faculty and
+// students of that department view it. One current document per department
+// (uploading a new one replaces it via upsert on departmentId). Scalar FK
+// columns only — relationMode = "prisma", so no DB-level foreign keys needed.
+model DepartmentTimetable {
+  id           Int      @id @default(autoincrement())
+  schoolId     Int
+  departmentId Int      @unique
+  fileUrl      String   @db.Text
+  uploadedById Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([schoolId])
+  @@map("department_timetables")
 }
 
 model Attendance {
