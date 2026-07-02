@@ -355,11 +355,14 @@ async function updateSession(sessionId, schoolId, departmentId, body) {
  *      that are still "active"
  *      (detained students have status "detained" so they are automatically
  *       skipped — their semester does NOT increment)
- *   3. Increments currentSemester by 1 for each promoted student
+ *   3. Increments currentSemester by 1 for each promoted student,
+ *      capped at 8 (a student already at semester 8 stays at 8)
  *   4. Flips those registration records from "active" → "completed"
  *
  * Safe to re-run: if all registrations are already "completed" the
  * student/registration updates match zero rows and nothing breaks.
+ * Also, ALLOWED_TRANSITIONS blocks "completed" → "completed" outright,
+ * so this function can't be triggered twice for the same session anyway.
  *
  * @param {number} sessionId    - The session being completed
  * @param {number} schoolId     - School isolation
@@ -387,11 +390,23 @@ async function promoteStudentsOnCompletion(sessionId, schoolId, departmentId) {
     const studentIds      = activeRegistrations.map((r) => r.studentId);
     const registrationIds = activeRegistrations.map((r) => r.id);
 
-    // Step 3 — Increment currentSemester for every promoted student
-    await tx.student.updateMany({
+    // Step 3 — Increment currentSemester for every promoted student, capped at 8.
+    // updateMany's `increment` can't cap per-row, so we fetch each student's
+    // current value, compute Math.min(current + 1, 8) in JS, and update
+    // each student individually (still inside this same transaction).
+    const students = await tx.student.findMany({
       where: { id: { in: studentIds }, schoolId },
-      data: { currentSemester: { increment: 1 } },
+      select: { id: true, currentSemester: true },
     });
+
+    await Promise.all(
+      students.map((s) =>
+        tx.student.update({
+          where: { id: s.id },
+          data: { currentSemester: Math.min(s.currentSemester + 1, 8) },
+        })
+      )
+    );
 
     // Step 4 — Flip those registrations from "active" → "completed"
     await tx.studentSessionRegistration.updateMany({
