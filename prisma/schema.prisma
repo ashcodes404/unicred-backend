@@ -563,20 +563,24 @@ model TimetableSlot {
   @@map("timetable_slots")
 }
 
-// A HOD simply uploads a PDF/image of their department's timetable; faculty and
-// students of that department view it. One current document per department
-// (uploading a new one replaces it via upsert on departmentId). Scalar FK
-// columns only — relationMode = "prisma", so no DB-level foreign keys needed.
+// A HOD uploads PDF/image timetables for their department. Each document targets
+// an audience: `faculty` (visible to all faculty of the department) or `student`
+// (visible to all students of the department). Multiple documents may exist per
+// department per audience; the HOD can edit or delete each one. Scalar FK columns
+// only — relationMode = "prisma", so no DB-level foreign keys needed.
 model DepartmentTimetable {
-  id           Int      @id @default(autoincrement())
+  id           Int               @id @default(autoincrement())
   schoolId     Int
-  departmentId Int      @unique
-  fileUrl      String   @db.Text
+  departmentId Int
+  audience     TimetableAudience
+  title        String?
+  fileUrl      String            @db.Text
   uploadedById Int
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   @@index([schoolId])
+  @@index([departmentId, audience])
   @@map("department_timetables")
 }
 
@@ -944,6 +948,11 @@ enum TimetableStatus {
   submitted
   returned
   approved
+}
+
+enum TimetableAudience {
+  faculty
+  student
 }
 
 enum SlotType {

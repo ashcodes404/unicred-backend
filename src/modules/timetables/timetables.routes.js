@@ -35,12 +35,16 @@ router.use(verifyToken, attachTenant);
 // ── Read one (any authenticated role in the school) ────────────────────────
 // Placed before the write routes; role guard is intentionally open here.
 
-// ── Department timetable DOCUMENT (uploaded PDF/image) ──────────────────────
-// Declared BEFORE "/:id" so "document" isn't captured as a timetable id.
-//   GET — HOD/faculty/student read their own department's uploaded timetable
-//   PUT — HOD uploads/replaces their own department's timetable file
-router.get("/document", controller.getTimetableDocument);
-router.put("/document", requireRole("hod"), facultyContext, controller.uploadTimetableDocument);
+// ── Department timetable DOCUMENTS (uploaded PDFs/images, per audience) ──────
+// Declared BEFORE "/:id" so "documents" isn't captured as a timetable id.
+//   GET    /documents[?audience]  HOD/faculty/student list own dept documents
+//   POST   /documents            HOD adds a new document (faculty|student)
+//   PATCH  /documents/:id        HOD edits a document (replace file / retitle)
+//   DELETE /documents/:id        HOD deletes a document
+router.get("/documents", controller.listTimetableDocuments);
+router.post("/documents", requireRole("hod"), facultyContext, controller.addTimetableDocument);
+router.patch("/documents/:id", requireRole("hod"), facultyContext, controller.updateTimetableDocument);
+router.delete("/documents/:id", requireRole("hod"), facultyContext, controller.deleteTimetableDocument);
 
 router.get("/:id", controller.getTimetableById);
 

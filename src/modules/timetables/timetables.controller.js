@@ -63,32 +63,66 @@ const getTimetableById = asyncHandler(async (req, res) => {
 });
 
 // -----------------------------------------------------------------------------
-// DEPARTMENT TIMETABLE DOCUMENT (uploaded PDF/image)
+// DEPARTMENT TIMETABLE DOCUMENTS (uploaded PDFs/images, per audience)
 // -----------------------------------------------------------------------------
 
 /**
- * PUT /api/timetables/document
- * HOD uploads (or replaces) their department's timetable file.
- * departmentId comes from req.faculty (facultyContext), never the body.
- * Body: { fileUrl }  (Cloudinary URL from POST /api/uploads)
+ * GET /api/timetables/documents[?audience=faculty|student]
+ * HOD, faculty, or student lists THEIR OWN department's timetable documents.
+ * Faculty always get `faculty` documents and students `student` documents;
+ * HODs may filter by audience or see both.
  */
-const uploadTimetableDocument = asyncHandler(async (req, res) => {
-  const doc = await service.setDepartmentTimetableDocument(
-    req.user.schoolId,
-    req.faculty.departmentId,
-    req.body.fileUrl,
-    req.user.userId,
+const listTimetableDocuments = asyncHandler(async (req, res) => {
+  const docs = await service.listDepartmentTimetableDocuments(
+    req.user,
+    req.query.audience,
   );
-  return success(res, 200, "Timetable uploaded.", doc);
+  return success(res, 200, "Timetable documents fetched.", docs);
 });
 
 /**
- * GET /api/timetables/document
- * HOD, faculty, or student fetches THEIR OWN department's timetable file.
+ * POST /api/timetables/documents
+ * HOD adds a new timetable document for their department.
+ * departmentId comes from req.faculty (facultyContext), never the body.
+ * Body: { fileUrl, audience: "faculty"|"student", title? }
  */
-const getTimetableDocument = asyncHandler(async (req, res) => {
-  const doc = await service.getDepartmentTimetableDocument(req.user);
-  return success(res, 200, "Timetable fetched.", doc);
+const addTimetableDocument = asyncHandler(async (req, res) => {
+  const doc = await service.addDepartmentTimetableDocument(
+    req.user.schoolId,
+    req.faculty.departmentId,
+    req.body,
+    req.user.userId,
+  );
+  return success(res, 201, "Timetable document added.", doc);
+});
+
+/**
+ * PATCH /api/timetables/documents/:id
+ * HOD edits one of their department's documents (replace file / retitle).
+ * Body: { fileUrl?, title? }
+ */
+const updateTimetableDocument = asyncHandler(async (req, res) => {
+  const doc = await service.updateDepartmentTimetableDocument(
+    Number(req.params.id),
+    req.user.schoolId,
+    req.faculty.departmentId,
+    req.body,
+    req.user.userId,
+  );
+  return success(res, 200, "Timetable document updated.", doc);
+});
+
+/**
+ * DELETE /api/timetables/documents/:id
+ * HOD deletes one of their department's documents.
+ */
+const deleteTimetableDocument = asyncHandler(async (req, res) => {
+  const result = await service.deleteDepartmentTimetableDocument(
+    Number(req.params.id),
+    req.user.schoolId,
+    req.faculty.departmentId,
+  );
+  return success(res, 200, "Timetable document deleted.", result);
 });
 
 /**
@@ -224,8 +258,10 @@ module.exports = {
   createTimetable,
   getDepartmentTimetables,
   getTimetableById,
-  uploadTimetableDocument,
-  getTimetableDocument,
+  listTimetableDocuments,
+  addTimetableDocument,
+  updateTimetableDocument,
+  deleteTimetableDocument,
   updateTimetable,
   addSlot,
   updateSlot,

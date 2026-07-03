@@ -13,6 +13,7 @@
 const repo = require("./syllabus.repository");
 const prisma = require("../../config/db");
 const AppError = require("../../utils/AppError");
+const { cached, invalidate } = require("../../utils/cache");
 const { isValidUrl } = require("../../utils/validators");
 const { notifyMany } = require("../../utils/notify");
 const NOTIFICATION_TYPES = require("../../constants/notificationTypes");

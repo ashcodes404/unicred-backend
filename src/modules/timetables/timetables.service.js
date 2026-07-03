@@ -255,78 +255,192 @@ async function resolveUserDepartmentId(user) {
 }
 
 // =============================================================================
-// DEPARTMENT TIMETABLE DOCUMENT (uploaded PDF/image)
+// DEPARTMENT TIMETABLE DOCUMENTS (uploaded PDFs/images, per audience)
 // =============================================================================
 
+const TIMETABLE_AUDIENCES = ["faculty", "student"];
+
+/** Validate an audience value or throw a 400. */
+function assertAudience(audience) {
+  if (!TIMETABLE_AUDIENCES.includes(audience)) {
+    throw new AppError(400, 'audience must be "faculty" or "student".');
+  }
+}
+
 /**
- * setDepartmentTimetableDocument — HOD uploads (or replaces) their department's
- * timetable file. departmentId comes from the HOD's own record, never the body,
- * so a HOD can only ever set their OWN department's timetable.
+ * Notify the target audience (all faculty OR all students of the department,
+ * excluding the uploading HOD) that a timetable was added/updated.
+ */
+async function notifyAudience(schoolId, departmentId, audience, uploadedById, message) {
+  if (audience === "faculty") {
+    const faculty = await prisma.faculty.findMany({
+      where: { schoolId, departmentId, deletedAt: null, userId: { not: uploadedById } },
+      select: { userId: true },
+    });
+    await notifyMany(
+      faculty.map((f) => f.userId),
+      NOTIFICATION_TYPES.TIMETABLE_UPLOADED,
+      message,
+      "/faculty/timetable",
+    );
+  } else {
+    const students = await prisma.student.findMany({
+      where: { schoolId, departmentId, deletedAt: null },
+      select: { userId: true },
+    });
+    await notifyMany(
+      students.map((s) => s.userId),
+      NOTIFICATION_TYPES.TIMETABLE_UPLOADED,
+      message,
+      "/student/timetable",
+    );
+  }
+}
+
+/**
+ * addDepartmentTimetableDocument — HOD adds a new timetable document for their
+ * department, targeting the `faculty` or `student` audience. departmentId comes
+ * from the HOD's own record (never the body), so a HOD can only ever add to
+ * their OWN department.
  *
  * @param {number} schoolId
  * @param {number} departmentId
- * @param {string} fileUrl      Cloudinary URL of the uploaded PDF/image
+ * @param {{ fileUrl:string, title?:string, audience:string }} body
  * @param {number} uploadedById HOD's user id
  */
-async function setDepartmentTimetableDocument(schoolId, departmentId, fileUrl, uploadedById) {
+async function addDepartmentTimetableDocument(schoolId, departmentId, body, uploadedById) {
+  const { fileUrl, title, audience } = body;
   if (!fileUrl || !isValidUrl(fileUrl)) {
     throw new AppError(400, "A valid uploaded file URL is required.");
   }
+  assertAudience(audience);
 
-  const doc = await repo.upsertDepartmentDocument(schoolId, departmentId, fileUrl, uploadedById);
+  const doc = await repo.createDepartmentDocument({
+    schoolId,
+    departmentId,
+    audience,
+    title: title?.trim() || null,
+    fileUrl,
+    uploadedById,
+  });
   await invalidate(`tt:${schoolId}`);
 
-  // Notify everyone in the department that a new timetable is available —
-  // all faculty and students of the department, but NOT the HOD who just
-  // uploaded it. Faculty and students have different timetable pages, so
-  // each group gets a link to its own.
-  const [faculty, students] = await Promise.all([
-    prisma.faculty.findMany({
-      where: { schoolId, departmentId, deletedAt: null, userId: { not: uploadedById } },
-      select: { userId: true },
-    }),
-    prisma.student.findMany({
-      where: { schoolId, departmentId, deletedAt: null },
-      select: { userId: true },
-    }),
-  ]);
-
-  const message = "A new timetable has been uploaded for your department.";
-  await notifyMany(
-    faculty.map((f) => f.userId),
-    NOTIFICATION_TYPES.TIMETABLE_UPLOADED,
-    message,
-    "/faculty/timetable",
-  );
-  await notifyMany(
-    students.map((s) => s.userId),
-    NOTIFICATION_TYPES.TIMETABLE_UPLOADED,
-    message,
-    "/student/timetable",
+  await notifyAudience(
+    schoolId,
+    departmentId,
+    audience,
+    uploadedById,
+    "A new timetable has been uploaded for your department.",
   );
 
   return doc;
 }
 
 /**
- * getDepartmentTimetableDocument — the timetable file for the CALLER's own
- * department. Works for HOD, faculty, and students; each only ever sees their
- * own department's document. Returns null when nothing has been uploaded.
+ * listDepartmentTimetableDocuments — timetable documents for the CALLER's own
+ * department. HODs may pass an audience filter (or omit it to see both);
+ * faculty always see only `faculty` documents and students only `student` ones,
+ * regardless of any requested filter.
  *
  * @param {{ userId:number, role:string, schoolId:number }} user
- * @returns {Promise<Object|null>}
+ * @param {string} [requestedAudience]  only honoured for HODs
+ * @returns {Promise<Object[]>}
  */
-async function getDepartmentTimetableDocument(user) {
+async function listDepartmentTimetableDocuments(user, requestedAudience) {
   const departmentId = await resolveUserDepartmentId(user);
   if (!departmentId) {
     throw new AppError(403, "No department is associated with your account.");
   }
+
+  // Faculty/students are locked to their own audience; HODs may filter freely.
+  let audience;
+  if (user.role === "faculty") audience = "faculty";
+  else if (user.role === "student") audience = "student";
+  else if (requestedAudience) {
+    assertAudience(requestedAudience);
+    audience = requestedAudience;
+  }
+
+  const key = `tt:${user.schoolId}:docs:${departmentId}:${audience ?? "all"}`;
   return cached(
-    `tt:${user.schoolId}:doc:${departmentId}`,
+    key,
     null,
-    () => repo.findDepartmentDocument(user.schoolId, departmentId),
-    `tt:${user.schoolId}`
+    () => repo.findDepartmentDocuments(user.schoolId, departmentId, audience),
+    `tt:${user.schoolId}`,
   );
+}
+
+/**
+ * Load a document and assert it belongs to the HOD's own department+school.
+ * @returns {Promise<Object>} the document (throws 404 if not found/foreign)
+ */
+async function getOwnedDocumentOr404(id, schoolId, departmentId) {
+  const doc = await repo.findDepartmentDocumentById(id, schoolId);
+  if (!doc || doc.departmentId !== departmentId) {
+    throw new AppError(404, "Timetable document not found.");
+  }
+  return doc;
+}
+
+/**
+ * updateDepartmentTimetableDocument — HOD edits one of their department's
+ * documents: replace the file and/or change the title. Audience is fixed once
+ * created (delete + re-add to move a document to the other audience).
+ *
+ * @param {number} id
+ * @param {number} schoolId
+ * @param {number} departmentId
+ * @param {{ fileUrl?:string, title?:string }} body
+ * @param {number} uploadedById HOD's user id
+ */
+async function updateDepartmentTimetableDocument(id, schoolId, departmentId, body, uploadedById) {
+  const existing = await getOwnedDocumentOr404(id, schoolId, departmentId);
+
+  const patch = {};
+  if (body.fileUrl !== undefined) {
+    if (!body.fileUrl || !isValidUrl(body.fileUrl)) {
+      throw new AppError(400, "A valid uploaded file URL is required.");
+    }
+    patch.fileUrl = body.fileUrl;
+    patch.uploadedById = uploadedById;
+  }
+  if (body.title !== undefined) {
+    patch.title = body.title?.trim() || null;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new AppError(400, "Nothing to update.");
+  }
+
+  const doc = await repo.updateDepartmentDocument(id, patch);
+  await invalidate(`tt:${schoolId}`);
+
+  // Only re-notify the audience when the actual file changed.
+  if (patch.fileUrl) {
+    await notifyAudience(
+      schoolId,
+      departmentId,
+      existing.audience,
+      uploadedById,
+      "A timetable for your department has been updated.",
+    );
+  }
+
+  return doc;
+}
+
+/**
+ * deleteDepartmentTimetableDocument — HOD deletes one of their department's
+ * documents.
+ *
+ * @param {number} id
+ * @param {number} schoolId
+ * @param {number} departmentId
+ */
+async function deleteDepartmentTimetableDocument(id, schoolId, departmentId) {
+  await getOwnedDocumentOr404(id, schoolId, departmentId);
+  await repo.deleteDepartmentDocument(id);
+  await invalidate(`tt:${schoolId}`);
+  return { id };
 }
 
 // =============================================================================
@@ -780,8 +894,10 @@ module.exports = {
   createTimetable,
   getDepartmentTimetables,
   getTimetableById,
-  setDepartmentTimetableDocument,
-  getDepartmentTimetableDocument,
+  addDepartmentTimetableDocument,
+  listDepartmentTimetableDocuments,
+  updateDepartmentTimetableDocument,
+  deleteDepartmentTimetableDocument,
   updateTimetable,
   addSlot,
   updateSlot,

@@ -124,7 +124,10 @@ async function loginHandler(req, res, next) {
 
     setRefreshTokenCookie(res, refreshToken);
 
-    return success(res, 200, "Login successful", { accessToken, user });
+    // Also return the refresh token in the body so the SPA can persist it and
+    // send it back on reload. This keeps the session alive when the httpOnly
+    // cookie isn't delivered on the cross-origin /auth/refresh call.
+    return success(res, 200, "Login successful", { accessToken, refreshToken, user });
   } catch (err) {
     next(err);
   }
@@ -135,7 +138,9 @@ async function loginHandler(req, res, next) {
 // ─────────────────────────────────────────────
 async function refreshHandler(req, res, next) {
   try {
-    const rawRefreshToken = req.cookies?.refreshToken;
+    // Prefer the httpOnly cookie; fall back to the token sent in the body by
+    // the SPA (needed on reload when the cross-origin cookie isn't delivered).
+    const rawRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
     const deviceInfo = extractDeviceInfo(req);
 
     const { accessToken, refreshToken: newRefreshToken } =
@@ -143,7 +148,9 @@ async function refreshHandler(req, res, next) {
 
     setRefreshTokenCookie(res, newRefreshToken);
 
-    return success(res, 200, "Token refreshed", { accessToken });
+    // Return the rotated refresh token in the body too, so the SPA can update
+    // its persisted copy for the next reload.
+    return success(res, 200, "Token refreshed", { accessToken, refreshToken: newRefreshToken });
   } catch (err) {
     next(err);
   }

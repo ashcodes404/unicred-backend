@@ -362,40 +362,82 @@ async function deleteSlot(slotId, schoolId) {
 }
 
 // =============================================================================
-// DEPARTMENT TIMETABLE DOCUMENT (uploaded PDF/image — one per department)
+// DEPARTMENT TIMETABLE DOCUMENTS (uploaded PDFs/images — many per department,
+// each targeting an audience: "faculty" or "student")
 // =============================================================================
 
+const DOC_SELECT = {
+  id: true,
+  departmentId: true,
+  audience: true,
+  title: true,
+  fileUrl: true,
+  createdAt: true,
+  updatedAt: true,
+};
+
 /**
- * upsertDepartmentDocument — create or replace a department's timetable file.
- * departmentId is unique, so a second upload overwrites the first.
+ * createDepartmentDocument — add a new timetable document for a department.
+ *
+ * @param {{ schoolId:number, departmentId:number, audience:string,
+ *           title?:string|null, fileUrl:string, uploadedById:number }} data
+ * @returns {Promise<Object>}
+ */
+async function createDepartmentDocument(data) {
+  return prisma.departmentTimetable.create({ data, select: DOC_SELECT });
+}
+
+/**
+ * findDepartmentDocuments — all timetable documents for one department,
+ * optionally filtered by audience. Newest first.
  *
  * @param {number} schoolId
  * @param {number} departmentId
- * @param {string} fileUrl
- * @param {number} uploadedById  user id of the HOD
- * @returns {Promise<Object>}
+ * @param {string} [audience]  "faculty" | "student" — omit for both
+ * @returns {Promise<Object[]>}
  */
-async function upsertDepartmentDocument(schoolId, departmentId, fileUrl, uploadedById) {
-  return prisma.departmentTimetable.upsert({
-    where:  { departmentId },
-    update: { fileUrl, uploadedById, schoolId },
-    create: { schoolId, departmentId, fileUrl, uploadedById },
+async function findDepartmentDocuments(schoolId, departmentId, audience) {
+  return prisma.departmentTimetable.findMany({
+    where: { schoolId, departmentId, ...(audience ? { audience } : {}) },
+    select: DOC_SELECT,
+    orderBy: { createdAt: "desc" },
   });
 }
 
 /**
- * findDepartmentDocument — the current timetable file for one department, or
- * null if the HOD hasn't uploaded one yet.
- *
+ * findDepartmentDocumentById — a single document scoped to the caller's school.
+ * @param {number} id
  * @param {number} schoolId
- * @param {number} departmentId
  * @returns {Promise<Object|null>}
  */
-async function findDepartmentDocument(schoolId, departmentId) {
+async function findDepartmentDocumentById(id, schoolId) {
   return prisma.departmentTimetable.findFirst({
-    where: { schoolId, departmentId },
-    select: { id: true, departmentId: true, fileUrl: true, updatedAt: true },
+    where: { id, schoolId },
+    select: { ...DOC_SELECT, uploadedById: true },
   });
+}
+
+/**
+ * updateDepartmentDocument — edit an existing document (replace file / retitle).
+ * @param {number} id
+ * @param {{ fileUrl?:string, title?:string|null, uploadedById?:number }} patch
+ * @returns {Promise<Object>}
+ */
+async function updateDepartmentDocument(id, patch) {
+  return prisma.departmentTimetable.update({
+    where: { id },
+    data: patch,
+    select: DOC_SELECT,
+  });
+}
+
+/**
+ * deleteDepartmentDocument — remove a document by id.
+ * @param {number} id
+ * @returns {Promise<Object>}
+ */
+async function deleteDepartmentDocument(id) {
+  return prisma.departmentTimetable.delete({ where: { id } });
 }
 
 // =============================================================================
@@ -406,8 +448,11 @@ module.exports = {
   createTimetable,
   findById,
   findAllByDepartment,
-  upsertDepartmentDocument,
-  findDepartmentDocument,
+  createDepartmentDocument,
+  findDepartmentDocuments,
+  findDepartmentDocumentById,
+  updateDepartmentDocument,
+  deleteDepartmentDocument,
   findDuplicate,
   updateTimetable,
   findAllByStatus,
