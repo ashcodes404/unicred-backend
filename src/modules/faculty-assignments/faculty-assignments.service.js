@@ -6,6 +6,7 @@ const repo = require("./faculty-assignments.repository");
 const sessionRepo = require("../academic-sessions/academic-sessions.repository");
 const AppError = require("../../utils/AppError");
 const { notify, notifyMany } = require("../../utils/notify");
+const { cached, invalidate } = require("../../utils/cache");
 
 // Helper: fetch faculty record from DB
 // We need this to get the facultyId from a userId,
@@ -150,6 +151,8 @@ async function createAssignment(
     assignedByHodId,
   });
 
+  await invalidate(`fas:${schoolId}`);
+
   // ── Notify faculty: SUBJECT_ASSIGNED ─────────────────────────────────────
   // Fire-and-forget — don't let a notification failure block the response
   try {
@@ -182,10 +185,12 @@ async function getAllAssignments(schoolId, departmentId, query) {
     throw new AppError(400, "sessionId query parameter is required.");
   }
 
-  return repo.findAllBySession(
-    schoolId,
-    parseInt(query.sessionId),
-    departmentId,
+  const sessionId = parseInt(query.sessionId);
+  return cached(
+    `fas:${schoolId}:all:${departmentId}:${sessionId}`,
+    null,
+    () => repo.findAllBySession(schoolId, sessionId, departmentId),
+    `fas:${schoolId}`
   );
 }
 
@@ -205,7 +210,12 @@ async function getMyAssignments(userId, schoolId, query) {
 
   const sessionId = query.sessionId ? parseInt(query.sessionId) : null;
 
-  return repo.findByFaculty(faculty.id, schoolId, sessionId);
+  return cached(
+    `fas:${schoolId}:mine:${faculty.id}:${sessionId ?? ""}`,
+    null,
+    () => repo.findByFaculty(faculty.id, schoolId, sessionId),
+    `fas:${schoolId}`
+  );
 }
 
 // =============================================================================
@@ -282,6 +292,8 @@ async function updateAssignment(assignmentId, schoolId, body) {
     throw new AppError(404, "Assignment not found.");
   }
 
+  await invalidate(`fas:${schoolId}`);
+
   return repo.findById(id, schoolId);
 }
 
@@ -330,6 +342,8 @@ async function deleteAssignment(assignmentId, schoolId) {
   }
 
   await repo.deleteAssignment(id, schoolId);
+
+  await invalidate(`fas:${schoolId}`);
 
   return { message: "Assignment removed." };
 }

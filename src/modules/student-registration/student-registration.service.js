@@ -7,6 +7,7 @@ const sessionRepo = require("../academic-sessions/academic-sessions.repository")
 const AppError = require("../../utils/AppError");
 const prisma = require("../../config/db");
 const { notifyMany, notify } = require("../../utils/notify");
+const { cached, invalidate } = require("../../utils/cache");
 
 // =============================================================================
 // REGISTER A STUDENT
@@ -102,6 +103,8 @@ async function registerStudent(schoolId, body) {
   } catch (error) {
     console.error("Failed to create student registration notification:", error);
   }
+
+  await invalidate(`sreg:${schoolId}`);
 
   return registration;
 }
@@ -317,6 +320,8 @@ async function bulkRegisterStudents(schoolId, body) {
     }
   }
 
+  await invalidate(`sreg:${schoolId}`);
+
   // ─────────────────────────────────────────────────────────────
   // Response
   // ─────────────────────────────────────────────────────────────
@@ -353,7 +358,12 @@ async function getMySession(userId, schoolId) {
     );
   }
 
-  const registration = await repo.findActiveRegistration(student.id, schoolId);
+  const registration = await cached(
+    `sreg:${schoolId}:mine:${student.id}`,
+    null,
+    () => repo.findActiveRegistration(student.id, schoolId),
+    `sreg:${schoolId}`
+  );
 
   if (!registration) {
     throw new AppError(
@@ -375,10 +385,15 @@ async function getStudentsInSession(schoolId, sessionId, query) {
     throw new AppError(400, "sessionId is required.");
   }
 
-  return repo.findAllBySession(schoolId, parseInt(sessionId), {
-    semesterNumber: query.semesterNumber,
-    batchYear: query.batchYear,
-  });
+  return cached(
+    `sreg:${schoolId}:session:${sessionId}:${query.semesterNumber ?? ""}:${query.batchYear ?? ""}`,
+    null,
+    () => repo.findAllBySession(schoolId, parseInt(sessionId), {
+      semesterNumber: query.semesterNumber,
+      batchYear: query.batchYear,
+    }),
+    `sreg:${schoolId}`
+  );
 }
 
 // =============================================================================
@@ -463,6 +478,8 @@ async function detainStudent(schoolId, registrationId) {
     console.error("Failed to send detention notification:", err);
   }
 
+  await invalidate(`sreg:${schoolId}`);
+
   return { message: "Student has been detained successfully." };
 }
 
@@ -534,6 +551,8 @@ async function undetainStudent(schoolId, registrationId) {
   } catch (err) {
     console.error("Failed to send undetain notification:", err);
   }
+
+  await invalidate(`sreg:${schoolId}`);
 
   return { message: "Student has been undetained successfully." };
 }

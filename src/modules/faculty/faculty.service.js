@@ -6,6 +6,8 @@ const departmentRepository = require(
   "../departments/departments.repository"
 );
 
+const { cached, invalidate } = require("../../utils/cache");
+
 /**
  * FACULTY SERVICE
  *
@@ -57,9 +59,11 @@ const departmentRepository = require(
  * the directory to one department.
  */
 async function getAllFaculty(schoolId, departmentId) {
-  return facultyRepository.findAllBySchool(
-    schoolId,
-    departmentId
+  return cached(
+    `fac:${schoolId}:all:${departmentId ?? ""}`,
+    null,
+    () => facultyRepository.findAllBySchool(schoolId, departmentId),
+    `fac:${schoolId}`
   );
 }
 
@@ -69,9 +73,11 @@ async function getAllFaculty(schoolId, departmentId) {
  * =====================================================
  */
 async function getFacultyById(facultyId, schoolId) {
-  const faculty = await facultyRepository.findById(
-    facultyId,
-    schoolId
+  const faculty = await cached(
+    `fac:${schoolId}:one:${facultyId}`,
+    null,
+    () => facultyRepository.findById(facultyId, schoolId),
+    `fac:${schoolId}`
   );
 
   if (!faculty) {
@@ -121,12 +127,16 @@ async function createFaculty(facultyData, schoolId) {
     throw new Error("Department not found");
   }
 
-  return facultyRepository.createFaculty({
+  const faculty = await facultyRepository.createFaculty({
     userId: facultyData.userId,
     schoolId,
     departmentId: facultyData.departmentId,
     designation: facultyData.designation,
   });
+
+  await invalidate(`fac:${schoolId}`);
+
+  return faculty;
 }
 
 /**
@@ -172,6 +182,8 @@ async function updateFaculty(
     ...(designation && { designation }),
   });
 
+  await invalidate(`fac:${schoolId}`);
+
   return facultyRepository.findById(facultyId, schoolId);
 }
 
@@ -193,6 +205,8 @@ async function deleteFaculty(facultyId, schoolId) {
   }
 
   await facultyRepository.deleteFaculty(facultyId, schoolId);
+
+  await invalidate(`fac:${schoolId}`);
 
   return {
     success: true,
@@ -308,7 +322,7 @@ async function completeFacultyProfile(
    *
    * Never trust frontend.
    */
-  return facultyRepository.createFaculty({
+  const faculty = await facultyRepository.createFaculty({
     userId: currentUser.userId,
 
     schoolId: currentUser.schoolId,
@@ -319,6 +333,10 @@ async function completeFacultyProfile(
     designation:
       profileData.designation,
   });
+
+  await invalidate(`fac:${currentUser.schoolId}`);
+
+  return faculty;
 }
 
 module.exports = {

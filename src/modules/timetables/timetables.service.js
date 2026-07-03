@@ -24,6 +24,7 @@ const { notify, notifyMany } = require("../../utils/notify");
 const { isValidTime, timesOverlap, isEndAfterStart } = require("../../utils/time");
 const { isValidUrl } = require("../../utils/validators");
 const NOTIFICATION_TYPES = require("../../constants/notificationTypes");
+const { cached, invalidate } = require("../../utils/cache");
 
 // dayOfWeek uses ISO numbering: 1 = Monday ... 7 = Sunday.
 const MIN_DAY = 1;
@@ -154,13 +155,17 @@ async function createTimetable(schoolId, departmentId, body) {
     );
   }
 
-  return repo.createTimetable({
+  const timetable = await repo.createTimetable({
     schoolId,
     sessionId: sid,
     departmentId,
     batchYear: batch,
     semesterNumber: sem,
   });
+
+  await invalidate(`tt:${schoolId}`);
+
+  return timetable;
 }
 
 // =============================================================================
@@ -173,7 +178,12 @@ async function createTimetable(schoolId, departmentId, body) {
  */
 async function getDepartmentTimetables(schoolId, departmentId, query) {
   const sessionId = query.sessionId ? parseInt(query.sessionId) : null;
-  return repo.findAllByDepartment(schoolId, departmentId, sessionId);
+  return cached(
+    `tt:${schoolId}:dept:${departmentId}:${sessionId ?? ""}`,
+    null,
+    () => repo.findAllByDepartment(schoolId, departmentId, sessionId),
+    `tt:${schoolId}`
+  );
 }
 
 /**
@@ -187,7 +197,18 @@ async function getDepartmentTimetables(schoolId, departmentId, query) {
  * @param {{ userId:number, role:string, schoolId:number }} user
  */
 async function getTimetableById(id, user) {
-  const timetable = await getTimetableOr404(parseInt(id), user.schoolId);
+  // Cached separately from getTimetableOr404 (used by write paths), so a
+  // stale cache entry can never let a mutation act on an out-of-date status.
+  const tid = parseInt(id);
+  const timetable = await cached(
+    `tt:${user.schoolId}:one:${tid}`,
+    null,
+    () => repo.findById(tid, user.schoolId),
+    `tt:${user.schoolId}`
+  );
+  if (!timetable) {
+    throw new AppError(404, "Timetable not found.");
+  }
 
   // Admins oversee every department in their school.
   if (user.role === "admin") return timetable;
@@ -253,6 +274,7 @@ async function setDepartmentTimetableDocument(schoolId, departmentId, fileUrl, u
   }
 
   const doc = await repo.upsertDepartmentDocument(schoolId, departmentId, fileUrl, uploadedById);
+  await invalidate(`tt:${schoolId}`);
 
   // Notify everyone in the department that a new timetable is available —
   // all faculty and students of the department, but NOT the HOD who just
@@ -299,7 +321,12 @@ async function getDepartmentTimetableDocument(user) {
   if (!departmentId) {
     throw new AppError(403, "No department is associated with your account.");
   }
-  return repo.findDepartmentDocument(user.schoolId, departmentId);
+  return cached(
+    `tt:${user.schoolId}:doc:${departmentId}`,
+    null,
+    () => repo.findDepartmentDocument(user.schoolId, departmentId),
+    `tt:${user.schoolId}`
+  );
 }
 
 // =============================================================================
@@ -327,6 +354,7 @@ async function updateTimetable(id, schoolId, body) {
   }
 
   await repo.updateTimetable(timetable.id, schoolId, data);
+  await invalidate(`tt:${schoolId}`);
   return repo.findById(timetable.id, schoolId);
 }
 
@@ -485,7 +513,7 @@ async function addSlot(timetableId, schoolId, body) {
     dayOfWeek, startTime, endTime, classroom,
   });
 
-  return repo.createSlot({
+  const slot = await repo.createSlot({
     schoolId,
     timetableId: timetable.id,
     subjectId,
@@ -496,6 +524,10 @@ async function addSlot(timetableId, schoolId, body) {
     classroom,
     slotType,
   });
+
+  await invalidate(`tt:${schoolId}`);
+
+  return slot;
 }
 
 /**
@@ -541,6 +573,7 @@ async function updateSlot(timetableId, slotId, schoolId, body) {
   });
 
   await repo.updateSlot(sId, schoolId, merged);
+  await invalidate(`tt:${schoolId}`);
   return repo.findSlotById(sId, schoolId);
 }
 
@@ -560,6 +593,7 @@ async function deleteSlot(timetableId, slotId, schoolId) {
   }
 
   await repo.deleteSlot(sId, schoolId);
+  await invalidate(`tt:${schoolId}`);
   return { message: "Slot removed." };
 }
 
@@ -606,6 +640,8 @@ async function moveToSubmitted(timetable, schoolId, allowedFrom) {
     }
   }
 
+  await invalidate(`tt:${schoolId}`);
+
   return repo.findById(timetable.id, schoolId);
 }
 
@@ -633,7 +669,12 @@ async function resubmitTimetable(id, schoolId) {
  * getSubmittedTimetables — admin sees all submitted timetables (oldest first).
  */
 async function getSubmittedTimetables(schoolId) {
-  return repo.findAllByStatus(schoolId, "submitted");
+  return cached(
+    `tt:${schoolId}:submitted`,
+    null,
+    () => repo.findAllByStatus(schoolId, "submitted"),
+    `tt:${schoolId}`
+  );
 }
 
 /**
@@ -675,6 +716,8 @@ async function approveTimetable(id, schoolId, adminUserId) {
       console.error("Failed to send TIMETABLE_APPROVED notification:", err);
     }
   }
+
+  await invalidate(`tt:${schoolId}`);
 
   return repo.findById(timetable.id, schoolId);
 }
@@ -723,6 +766,8 @@ async function returnTimetable(id, schoolId, adminUserId, comment) {
       console.error("Failed to send TIMETABLE_RETURNED notification:", err);
     }
   }
+
+  await invalidate(`tt:${schoolId}`);
 
   return repo.findById(timetable.id, schoolId);
 }

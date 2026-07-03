@@ -25,6 +25,7 @@ const repo = require("./academic-sessions.repository");
 const AppError = require("../../utils/AppError");
 const { notifyMany , notify } = require("../../utils/notify");
 const prisma = require("../../config/db")
+const { cached, invalidate } = require("../../utils/cache");
 
 
 // =============================================================================
@@ -168,6 +169,8 @@ if (userIds.length > 0) {
   console.error("Session notification failed:", err);
 }
 
+await invalidate(`sess:${schoolId}`);
+
 return session
 }
 
@@ -197,7 +200,12 @@ async function getAllSessions(schoolId, departmentId, status = null) {
     );
   }
 
-  return repo.findAllByDepartment(schoolId, departmentId, status);
+  return cached(
+    `sess:${schoolId}:all:${departmentId}:${status ?? ""}`,
+    null,
+    () => repo.findAllByDepartment(schoolId, departmentId, status),
+    `sess:${schoolId}`
+  );
 }
 
 /**
@@ -212,10 +220,11 @@ async function getAllSessions(schoolId, departmentId, status = null) {
  * @returns {Promise<Object>}
  */
 async function getSessionById(sessionId, schoolId, departmentId) {
-  const session = await repo.findById(
-    parseInt(sessionId),
-    schoolId,
-    departmentId
+  const session = await cached(
+    `sess:${schoolId}:one:${departmentId}:${sessionId}`,
+    null,
+    () => repo.findById(parseInt(sessionId), schoolId, departmentId),
+    `sess:${schoolId}`
   );
 
   if (!session) {
@@ -237,9 +246,11 @@ async function getSessionById(sessionId, schoolId, departmentId) {
  * @returns {Promise<Object>}
  */
 async function getSessionByIdForAnyRole(sessionId, schoolId) {
-  const session = await repo.findByIdForAnyRole(
-    parseInt(sessionId),
-    schoolId
+  const session = await cached(
+    `sess:${schoolId}:any:${sessionId}`,
+    null,
+    () => repo.findByIdForAnyRole(parseInt(sessionId), schoolId),
+    `sess:${schoolId}`
   );
 
   if (!session) {
@@ -333,6 +344,8 @@ async function updateSession(sessionId, schoolId, departmentId, body) {
   if (result.count === 0) {
     throw new AppError(404, "Academic session not found.");
   }
+
+  await invalidate(`sess:${schoolId}`);
 
   // Return updated record
   return repo.findById(id, schoolId, departmentId);
@@ -496,6 +509,11 @@ async function updateSessionStatus(sessionId, schoolId, departmentId, newStatus)
   } else {
     await repo.updateSessionStatus(id, schoolId, departmentId, newStatus);
   }
+
+  await invalidate(`sess:${schoolId}`);
+  // Session completion promotes students to a new semester — subject/course
+  // caches don't change, but student list/filter caches would go stale.
+  await invalidate(`stu:${schoolId}`);
 
   return repo.findById(id, schoolId, departmentId);
 }

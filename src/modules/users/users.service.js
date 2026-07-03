@@ -1,4 +1,5 @@
 const userRepository = require("./users.repository");
+const { cached, invalidate } = require("../../utils/cache");
 
 /**
  * USER SERVICE
@@ -56,8 +57,11 @@ const SELF_EDITABLE_FIELDS = [
  * =====================================================
  */
 async function getOwnProfile(currentUser) {
-  const user = await userRepository.findByUserId(
-    currentUser.userId
+  const user = await cached(
+    `usr:profile:${currentUser.userId}`,
+    null,
+    () => userRepository.findByUserId(currentUser.userId),
+    `usr:profile:${currentUser.userId}`
   );
 
   if (!user) {
@@ -94,6 +98,8 @@ async function updateOwnProfile(currentUser, updateData) {
     whitelisted
   );
 
+  await invalidate(`usr:profile:${currentUser.userId}`);
+
   return userRepository.findByUserId(currentUser.userId);
 }
 
@@ -106,7 +112,12 @@ async function updateOwnProfile(currentUser, updateData) {
  * faculty accounts.
  */
 async function getAllUsers(schoolId, role) {
-  return userRepository.findAllBySchool(schoolId, role);
+  return cached(
+    `usr:${schoolId}:all:${role ?? ""}`,
+    null,
+    () => userRepository.findAllBySchool(schoolId, role),
+    `usr:${schoolId}`
+  );
 }
 
 /**
@@ -115,7 +126,12 @@ async function getAllUsers(schoolId, role) {
  * =====================================================
  */
 async function getUserById(userId, schoolId) {
-  const user = await userRepository.findById(userId, schoolId);
+  const user = await cached(
+    `usr:${schoolId}:one:${userId}`,
+    null,
+    () => userRepository.findById(userId, schoolId),
+    `usr:${schoolId}`
+  );
 
   if (!user) {
     throw new Error("User not found");
@@ -153,6 +169,9 @@ async function deactivateUser(userId, schoolId) {
    * access token hasn't expired yet.
    */
   await userRepository.revokeAllRefreshTokens(userId);
+
+  await invalidate(`usr:${schoolId}`);
+  await invalidate(`usr:profile:${userId}`);
 
   return {
     success: true,

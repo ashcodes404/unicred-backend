@@ -92,7 +92,12 @@ async function listForUser(user) {
   if (!departmentId) {
     throw new AppError(403, "No department is associated with your account.");
   }
-  return repo.findByDepartment(user.schoolId, departmentId);
+  return cached(
+    `syl:${user.schoolId}:${departmentId}`,
+    null,
+    () => repo.findByDepartment(user.schoolId, departmentId),
+    `syl:${user.schoolId}`
+  );
 }
 
 /** HOD: add a syllabus file to one of their department's subjects. */
@@ -168,6 +173,7 @@ async function updateSyllabusFile(id, schoolId, departmentId, body, actorUserId)
 async function deleteSyllabusFile(id, schoolId, departmentId) {
   await getOwnedFileOr404(id, schoolId, departmentId);
   await repo.deleteById(Number(id));
+  await invalidate(`syl:${schoolId}`);
   return { message: "Syllabus file deleted." };
 }
 

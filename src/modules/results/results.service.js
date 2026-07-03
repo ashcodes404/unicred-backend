@@ -3,9 +3,10 @@
 const prisma = require("../../config/db");
 const AppError = require("../../utils/AppError");
 const { notify } = require("../../utils/notify");
-const { computeGrade, computeSGPA, computeCGPA } = require("../../utils/grading");
+const { computeGrade } = require("../../utils/grading");
 const gradingRepo = require("../grading/grading.repository");
 const repo = require("./results.repository");
+const { enqueueResultsPublish } = require("../../queues/results.queue");
 
 // ─── Valid Status Transitions ─────────────────────────────────────────────────
 // Maps current status → allowed next statuses
@@ -60,7 +61,14 @@ async function transitionStatus(publicationId, schoolId, newStatus, hodUserId) {
     if (pending.length > 0) {
       throw new AppError(400, `Cannot publish — ${pending.length} subject(s) still pending submission`);
     }
-    return _publishResult(pub, hodUserId);
+
+    // The actual SGPA/CGPA recompute + notification fan-out can touch
+    // hundreds of students, so it runs as a background job — this request
+    // returns immediately. The publication's status flips to "published"
+    // only once that job finishes (see results-publish.processor.js).
+    await enqueueResultsPublish({ publicationId, schoolId, hodUserId });
+
+    return { ...pub, publishing: true };
   }
 
   return repo.updatePublicationStatus(publicationId, newStatus, hodUserId);
@@ -152,78 +160,8 @@ async function submitMarks(facultyId, schoolId, publicationId, subjectId, marks,
   return { submitted: marks.length, allSubmitted, isReappear };
 }
 
-// ─── Publish Flow ─────────────────────────────────────────────────────────────
-
-/**
- * Called when HOD transitions status to "published".
- * For every registered student: compute SGPA → compute CGPA → upsert CgpaRecord → notify.
- */
-async function _publishResult(pub, hodUserId) {
-  const session = await prisma.academicSession.findFirst({
-    where: { id: pub.sessionId }, select: { name: true },
-  });
-
-  const semester = await repo.getSemesterByNumber(pub.schoolId, pub.semesterNumber);
-  if (!semester) throw new AppError(500, "Semester record not found");
-
-  const studentIds = await repo.getRegisteredStudentIds(pub.schoolId, pub.sessionId, pub.batchYear, pub.semesterNumber);
-
-  // Process all students concurrently
-  await Promise.all(
-    studentIds.map(async (studentId) => {
-      const studentMarks = await repo.getStudentMarksForPublication(studentId, pub.id);
-      if (!studentMarks.length) return;
-
-      // Build input for SGPA computation
-      const subjectResults = studentMarks.map((m) => ({
-        credits: m.subject.credits,
-        gradePoint: m.gradePoint ?? 0,
-        isPassed: m.marks >= m.subject.passingMarks,
-      }));
-
-      const { sgpa, totalCredits } = computeSGPA(subjectResults);
-
-      // Get previous semester records to compute cumulative CGPA
-      const prevRecords = await repo.getAllCgpaRecords(studentId);
-      const allSems = [
-        ...prevRecords.map((r) => ({ sgpa: r.sgpa, totalCredits: r.totalCredits })),
-        { sgpa, totalCredits },
-      ];
-      const cgpa = computeCGPA(allSems);
-
-      await repo.upsertCgpaRecord(studentId, semester.id, sgpa, cgpa, totalCredits, 0);
-
-      // Notify student about failed subjects
-      const student = await prisma.student.findFirst({
-        where: { id: studentId }, include: { user: { select: { id: true } } },
-      });
-      if (!student) return;
-
-      for (const m of studentMarks) {
-        if (m.grade === "F") {
-          const subj = await prisma.subject.findFirst({ where: { id: m.subjectId }, select: { name: true } });
-          await notify(student.user.id, "RESULT_FAIL", `You failed ${subj?.name ?? "a subject"}. You may apply for reappear.`, `/results/session/${pub.sessionId}`);
-        }
-      }
-
-      await notify(student.user.id, "RESULT_PUBLISHED", `Results for ${session?.name ?? "your session"} are published.`, `/results/session/${pub.sessionId}`);
-    })
-  );
-
-  // Compute batch average CGPA and update all records for this semester
-  const semRecords = await prisma.cgpaRecord.findMany({
-    where: { semesterId: semester.id, studentId: { in: studentIds } },
-  });
-  if (semRecords.length) {
-    const avg = parseFloat((semRecords.reduce((s, r) => s + r.cgpa, 0) / semRecords.length).toFixed(2));
-    await prisma.cgpaRecord.updateMany({
-      where: { semesterId: semester.id, studentId: { in: studentIds } },
-      data: { classAverageCgpa: avg },
-    });
-  }
-
-  return repo.updatePublicationStatus(pub.id, "published", hodUserId);
-}
+// Publish fan-out (SGPA/CGPA recompute + notifications) now lives in
+// src/jobs/results-publish.processor.js, run via the results-publish queue.
 
 // ─── Getters ──────────────────────────────────────────────────────────────────
 

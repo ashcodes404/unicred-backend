@@ -2,6 +2,7 @@
 
 const AppError = require("../../utils/AppError");
 const repo = require("./grading.repository");
+const { cached, invalidate } = require("../../utils/cache");
 
 /**
  * Validates that grade rules are complete and correct:
@@ -53,31 +54,46 @@ function validateRules(rules) {
 }
 
 async function listGradingSystems(schoolId) {
-  return repo.listBySchool(schoolId);
+  return cached(
+    `grd:${schoolId}:list`,
+    null,
+    () => repo.listBySchool(schoolId),
+    `grd:${schoolId}`
+  );
 }
 
 async function getActiveSystem(schoolId) {
-  const system = await repo.getActiveSystemForSchool(schoolId);
+  const system = await cached(
+    `grd:${schoolId}:active`,
+    null,
+    () => repo.getActiveSystemForSchool(schoolId),
+    `grd:${schoolId}`
+  );
   if (!system) throw new AppError(500, "No grading system found. Run seed-grading.js first.");
   return system;
 }
 
 async function createGradingSystem(schoolId, name, rules) {
   validateRules(rules);
-  return repo.create(schoolId, name, rules);
+  const system = await repo.create(schoolId, name, rules);
+  await invalidate(`grd:${schoolId}`);
+  return system;
 }
 
 async function updateGradingSystem(id, schoolId, name, rules) {
   if (rules) validateRules(rules);
   const updated = await repo.update(id, schoolId, name, rules);
   if (!updated) throw new AppError(404, "Grading system not found or access denied");
+  await invalidate(`grd:${schoolId}`);
   return updated;
 }
 
 async function activateGradingSystem(id, schoolId) {
   const system = await repo.findById(id, schoolId);
   if (!system) throw new AppError(404, "Grading system not found or access denied");
-  return repo.activate(id, schoolId);
+  const activated = await repo.activate(id, schoolId);
+  await invalidate(`grd:${schoolId}`);
+  return activated;
 }
 
 module.exports = {

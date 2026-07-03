@@ -5,6 +5,7 @@
 const repo        = require("./courses.repository");
 const sessionRepo = require("../academic-sessions/academic-sessions.repository");
 const AppError    = require("../../utils/AppError");
+const { cached, invalidate } = require("../../utils/cache");
 
 const VALID_SUBJECT_TYPES = ["theory", "lab", "tutorial"];
 
@@ -65,7 +66,7 @@ async function createSubject(schoolId, departmentId, body) {
     );
   }
 
-  return repo.createSubject({
+  const subject = await repo.createSubject({
     schoolId,
     departmentId,
     courseCode:   courseCode.trim().toUpperCase(),
@@ -75,6 +76,10 @@ async function createSubject(schoolId, departmentId, body) {
     passingMarks: parseFloat(passingMarks),
     totalMarks:   parseFloat(totalMarks),
   });
+
+  await invalidate(`crs:${schoolId}`);
+
+  return subject;
 }
 
 /**
@@ -85,17 +90,23 @@ async function createSubject(schoolId, departmentId, body) {
  * @param {boolean} includeInactive - From query: ?includeInactive=true
  */
 async function getAllSubjects(schoolId, departmentId, includeInactive = false) {
-  return repo.findAllByDepartment(schoolId, departmentId, includeInactive);
+  return cached(
+    `crs:${schoolId}:subjects:${departmentId}:${includeInactive}`,
+    null,
+    () => repo.findAllByDepartment(schoolId, departmentId, includeInactive),
+    `crs:${schoolId}`
+  );
 }
 
 /**
  * Get a single subject (HOD view — dept scoped).
  */
 async function getSubjectById(subjectId, schoolId, departmentId) {
-  const subject = await repo.findById(
-    parseInt(subjectId),
-    schoolId,
-    departmentId
+  const subject = await cached(
+    `crs:${schoolId}:subject:${departmentId}:${subjectId}`,
+    null,
+    () => repo.findById(parseInt(subjectId), schoolId, departmentId),
+    `crs:${schoolId}`
   );
 
   if (!subject) {
@@ -110,7 +121,12 @@ async function getSubjectById(subjectId, schoolId, departmentId) {
  * Faculty and students use this to view subject details.
  */
 async function getSubjectByIdForAnyRole(subjectId, schoolId) {
-  const subject = await repo.findByIdForAnyRole(parseInt(subjectId), schoolId);
+  const subject = await cached(
+    `crs:${schoolId}:subject-any:${subjectId}`,
+    null,
+    () => repo.findByIdForAnyRole(parseInt(subjectId), schoolId),
+    `crs:${schoolId}`
+  );
 
   if (!subject) {
     throw new AppError(404, "Subject not found.");
@@ -193,6 +209,8 @@ async function updateSubject(subjectId, schoolId, departmentId, body) {
     throw new AppError(404, "Subject not found.");
   }
 
+  await invalidate(`crs:${schoolId}`);
+
   return repo.findById(id, schoolId, departmentId);
 }
 
@@ -217,6 +235,8 @@ async function deactivateSubject(subjectId, schoolId, departmentId) {
   }
 
   await repo.deactivateSubject(id, schoolId, departmentId);
+
+  await invalidate(`crs:${schoolId}`);
 
   return { message: "Subject deactivated successfully." };
 }
@@ -294,7 +314,7 @@ async function createOffering(schoolId, departmentId, body) {
     );
   }
 
-  return repo.createOffering({
+  const offering = await repo.createOffering({
     schoolId,
     sessionId:      parseInt(sessionId),
     subjectId:      parseInt(subjectId),
@@ -302,6 +322,10 @@ async function createOffering(schoolId, departmentId, body) {
     semesterNumber: parseInt(semesterNumber),
     batchYear:      parseInt(batchYear),
   });
+
+  await invalidate(`crs:${schoolId}`);
+
+  return offering;
 }
 
 /**
@@ -310,10 +334,15 @@ async function createOffering(schoolId, departmentId, body) {
  * Optionally filter by semesterNumber and/or batchYear.
  */
 async function getOfferings(schoolId, sessionId, query) {
-  return repo.findOfferingsBySession(schoolId, parseInt(sessionId), {
-    semesterNumber: query.semesterNumber,
-    batchYear:      query.batchYear,
-  });
+  return cached(
+    `crs:${schoolId}:offerings:${sessionId}:${query.semesterNumber ?? ""}:${query.batchYear ?? ""}`,
+    null,
+    () => repo.findOfferingsBySession(schoolId, parseInt(sessionId), {
+      semesterNumber: query.semesterNumber,
+      batchYear:      query.batchYear,
+    }),
+    `crs:${schoolId}`
+  );
 }
 
 /**
@@ -338,6 +367,8 @@ async function deleteOffering(offeringId, schoolId) {
   }
 
   await repo.deleteOffering(id, schoolId);
+
+  await invalidate(`crs:${schoolId}`);
 
   return { message: "Course offering removed." };
 }
