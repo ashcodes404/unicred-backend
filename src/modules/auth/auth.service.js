@@ -42,11 +42,7 @@ const { signAccessToken } = require("../../utils/jwt");
 const { writeAuditLog, AUDIT_EVENTS } = require("../../utils/audit");
 const { REFRESH_TOKEN_EXPIRES_DAYS } = require("../../config/env");
 
-const {
-  sendVerificationOtp,
-  sendPasswordResetOtp,
-  sendAccountCreatedEmail,
-} = require("../../utils/email");
+const { enqueueEmail } = require("../../queues/email.queue");
 
 /**
  * --------------------------------------------------------
@@ -234,7 +230,7 @@ async function register({ email, password, name }) {
    * Production:
    * Sends actual email via Gmail.
    */
-  await sendVerificationOtp(user.email, otp);
+  await enqueueEmail("verification-otp", { email: user.email, otp });
 
   // 5. Audit log
   await writeAuditLog({
@@ -475,7 +471,7 @@ async function resendOtp({ email }) {
 
 * Send email.
   */
-  await sendVerificationOtp(user.email, otp);
+  await enqueueEmail("verification-otp", { email: user.email, otp });
 
   return {
     success: true,
@@ -561,7 +557,7 @@ async function invite({ email, name, role }, adminUser) {
    * - Role
    * - School Information
    */
-  await sendAccountCreatedEmail({
+  await enqueueEmail("account-created", {
     email,
     name,
     password: tempPassword,
@@ -1005,10 +1001,7 @@ async function forgotPassword({ email }) {
   /**
    * Send email.
    */
-  await sendPasswordResetOtp(
-    user.email,
-    otp
-  );
+  await enqueueEmail("password-reset-otp", { email: user.email, otp });
 
   /**
  * Record audit event.
