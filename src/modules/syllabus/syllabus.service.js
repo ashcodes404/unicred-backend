@@ -14,6 +14,7 @@ const repo = require("./syllabus.repository");
 const prisma = require("../../config/db");
 const AppError = require("../../utils/AppError");
 const { isValidUrl } = require("../../utils/validators");
+const { cached, invalidate } = require("../../utils/cache");
 
 /**
  * Resolve a non-admin user's department from their role-specific record.
@@ -58,7 +59,12 @@ async function listForUser(user) {
   if (!departmentId) {
     throw new AppError(403, "No department is associated with your account.");
   }
-  return repo.findByDepartment(user.schoolId, departmentId);
+  return cached(
+    `syl:${user.schoolId}:${departmentId}`,
+    null,
+    () => repo.findByDepartment(user.schoolId, departmentId),
+    `syl:${user.schoolId}`
+  );
 }
 
 /** HOD: add a syllabus file to one of their department's subjects. */
@@ -70,7 +76,7 @@ async function createSyllabusFile(schoolId, departmentId, body, uploadedById) {
   }
   await assertSubjectInDepartment(subjectId, schoolId, departmentId);
 
-  return repo.create({
+  const file = await repo.create({
     schoolId,
     departmentId,
     subjectId: Number(subjectId),
@@ -78,6 +84,10 @@ async function createSyllabusFile(schoolId, departmentId, body, uploadedById) {
     title: title?.trim() || null,
     uploadedById,
   });
+
+  await invalidate(`syl:${schoolId}`);
+
+  return file;
 }
 
 /** Load a file and confirm it belongs to the HOD's department. */
@@ -103,13 +113,16 @@ async function updateSyllabusFile(id, schoolId, departmentId, body) {
   if (Object.keys(data).length === 0) {
     throw new AppError(400, "Nothing to update.");
   }
-  return repo.updateById(Number(id), data);
+  const file = await repo.updateById(Number(id), data);
+  await invalidate(`syl:${schoolId}`);
+  return file;
 }
 
 /** HOD: delete a syllabus file. */
 async function deleteSyllabusFile(id, schoolId, departmentId) {
   await getOwnedFileOr404(id, schoolId, departmentId);
   await repo.deleteById(Number(id));
+  await invalidate(`syl:${schoolId}`);
   return { message: "Syllabus file deleted." };
 }
 

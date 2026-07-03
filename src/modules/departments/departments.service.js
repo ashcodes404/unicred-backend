@@ -6,6 +6,8 @@ const userRepository = require(
   "../users/users.repository"
 );
 
+const { cached, invalidate } = require("../../utils/cache");
+
 /**
  * =====================================================
  * HELPER: reconcileHodRole  (written by us)
@@ -120,8 +122,11 @@ async function reconcileHodRole(userId, schoolId) {
 async function getAllDepartments(
   schoolId
 ) {
-  return departmentRepository.findAllBySchool(
-    schoolId
+  return cached(
+    `dept:${schoolId}:all`,
+    null,
+    () => departmentRepository.findAllBySchool(schoolId),
+    `dept:${schoolId}`
   );
 }
 
@@ -140,11 +145,12 @@ async function getDepartmentById(
   departmentId,
   schoolId
 ) {
-  const department =
-    await departmentRepository.findById(
-      departmentId,
-      schoolId
-    );
+  const department = await cached(
+    `dept:${schoolId}:${departmentId}`,
+    null,
+    () => departmentRepository.findById(departmentId, schoolId),
+    `dept:${schoolId}`
+  );
 
   if (!department) {
     throw new Error(
@@ -218,10 +224,14 @@ async function createDepartment(
   /**
    * Create department.
    */
-  return departmentRepository.createDepartment({
+  const department = await departmentRepository.createDepartment({
     schoolId,
     name: normalizedName,
   });
+
+  await invalidate(`dept:${schoolId}`);
+
+  return department;
 }
 
 /**
@@ -387,6 +397,8 @@ async function updateDepartment(
     );
   }
 
+  await invalidate(`dept:${schoolId}`);
+
   return departmentRepository.findById(
     departmentId,
     schoolId
@@ -432,6 +444,8 @@ async function deleteDepartment(
     departmentId,
     schoolId
   );
+
+  await invalidate(`dept:${schoolId}`);
 
   // The headship is gone — demote the old HOD to faculty if they now head
   // no active department. reconcileHodRole no-ops on null / still-heading.

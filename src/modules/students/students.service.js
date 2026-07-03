@@ -13,6 +13,8 @@ const departmentRepository = require(
   "../departments/departments.repository"
 );
 
+const { cached, invalidate } = require("../../utils/cache");
+
 /**
  * STUDENT SERVICE
  *
@@ -37,7 +39,12 @@ const departmentRepository = require(
  * users can never see students from another school.
  */
 async function getAllStudents(schoolId) {
-  return studentRepository.findAllBySchool(schoolId);
+  return cached(
+    `stu:${schoolId}:all`,
+    null,
+    () => studentRepository.findAllBySchool(schoolId),
+    `stu:${schoolId}`
+  );
 }
 
 /**
@@ -46,9 +53,11 @@ async function getAllStudents(schoolId) {
  * Repository already enforces school isolation.
  */
 async function getStudentById(studentId, schoolId , currentUser) {
-  const student = await studentRepository.findById(
-    studentId,
-    schoolId, 
+  const student = await cached(
+    `stu:${schoolId}:one:${studentId}`,
+    null,
+    () => studentRepository.findById(studentId, schoolId),
+    `stu:${schoolId}`
   );
 
   if (!student) {
@@ -74,10 +83,12 @@ async function getStudentById(studentId, schoolId , currentUser) {
  * Never trust frontend schoolId.
  */
 async function createStudent(studentData, schoolId) {
-  return studentRepository.createStudent({
+  const student = await studentRepository.createStudent({
     ...studentData,
     schoolId,
   });
+  await invalidate(`stu:${schoolId}`);
+  return student;
 }
 
 /**
@@ -124,6 +135,11 @@ async function updateStudent(
     updateData
   );
 
+  await invalidate(`stu:${schoolId}`);
+  if (existingStudent.userId) {
+    await invalidate(`stu:profile:${existingStudent.userId}`);
+  }
+
   return studentRepository.findById(
     studentId,
     schoolId
@@ -158,6 +174,11 @@ async function deleteStudent(
     studentId,
     schoolId
   );
+
+  await invalidate(`stu:${schoolId}`);
+  if (existingStudent.userId) {
+    await invalidate(`stu:profile:${existingStudent.userId}`);
+  }
 
   return {
     success: true,
@@ -384,7 +405,7 @@ async function completeStudentProfile(
    *
    * Never trust frontend.
    */
-  return studentRepository.createStudent({
+  const student = await studentRepository.createStudent({
     userId: currentUser.userId,
 
     schoolId: currentUser.schoolId,
@@ -405,6 +426,11 @@ async function completeStudentProfile(
     currentSemester:
       profileData.currentSemester,
   });
+
+  await invalidate(`stu:${currentUser.schoolId}`);
+  await invalidate(`stu:profile:${currentUser.userId}`);
+
+  return student;
 }
 
 /**
@@ -421,7 +447,12 @@ async function completeStudentProfile(
  * registration, not a failure.
  */
 async function getMyStudentProfile(userId) {
-  return studentRepository.findByUserId(userId);
+  return cached(
+    `stu:profile:${userId}`,
+    null,
+    () => studentRepository.findByUserId(userId),
+    `stu:profile:${userId}`
+  );
 }
 
 
@@ -457,7 +488,12 @@ async function getStudentsByFilters(schoolId, query) {
     semesterNumber: parseIfPresent(query.semesterNumber),
   };
 
-  return studentRepository.findByFilters(schoolId, filters);
+  return cached(
+    `stu:${schoolId}:filter:${filters.departmentId ?? ""}:${filters.batchYear ?? ""}:${filters.semesterNumber ?? ""}`,
+    null,
+    () => studentRepository.findByFilters(schoolId, filters),
+    `stu:${schoolId}`
+  );
 }
 
 module.exports = {
