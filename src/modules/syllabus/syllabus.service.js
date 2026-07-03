@@ -14,6 +14,39 @@ const repo = require("./syllabus.repository");
 const prisma = require("../../config/db");
 const AppError = require("../../utils/AppError");
 const { isValidUrl } = require("../../utils/validators");
+const { notifyMany } = require("../../utils/notify");
+const NOTIFICATION_TYPES = require("../../constants/notificationTypes");
+
+/**
+ * Notify every faculty and student of a department (except the acting HOD)
+ * that a subject's syllabus changed. Faculty and students have different
+ * syllabus pages, so each group gets a link to its own.
+ */
+async function notifyDepartmentOfSyllabus(schoolId, departmentId, message, excludeUserId) {
+  const [faculty, students] = await Promise.all([
+    prisma.faculty.findMany({
+      where: { schoolId, departmentId, deletedAt: null, userId: { not: excludeUserId } },
+      select: { userId: true },
+    }),
+    prisma.student.findMany({
+      where: { schoolId, departmentId, deletedAt: null },
+      select: { userId: true },
+    }),
+  ]);
+
+  await notifyMany(
+    faculty.map((f) => f.userId),
+    NOTIFICATION_TYPES.SYLLABUS_UPDATED,
+    message,
+    "/faculty/syllabus",
+  );
+  await notifyMany(
+    students.map((s) => s.userId),
+    NOTIFICATION_TYPES.SYLLABUS_UPDATED,
+    message,
+    "/student/syllabus",
+  );
+}
 
 /**
  * Resolve a non-admin user's department from their role-specific record.
@@ -42,11 +75,12 @@ async function resolveUserDepartmentId(user) {
 async function assertSubjectInDepartment(subjectId, schoolId, departmentId) {
   const subject = await prisma.subject.findFirst({
     where: { id: Number(subjectId), schoolId, departmentId },
-    select: { id: true },
+    select: { id: true, name: true },
   });
   if (!subject) {
     throw new AppError(404, "Subject not found in your department.");
   }
+  return subject;
 }
 
 /**
@@ -68,9 +102,9 @@ async function createSyllabusFile(schoolId, departmentId, body, uploadedById) {
   if (!fileUrl || !isValidUrl(fileUrl)) {
     throw new AppError(400, "A valid uploaded file URL is required.");
   }
-  await assertSubjectInDepartment(subjectId, schoolId, departmentId);
+  const subject = await assertSubjectInDepartment(subjectId, schoolId, departmentId);
 
-  return repo.create({
+  const file = await repo.create({
     schoolId,
     departmentId,
     subjectId: Number(subjectId),
@@ -78,6 +112,16 @@ async function createSyllabusFile(schoolId, departmentId, body, uploadedById) {
     title: title?.trim() || null,
     uploadedById,
   });
+
+  // Tell the whole department a new syllabus is available.
+  await notifyDepartmentOfSyllabus(
+    schoolId,
+    departmentId,
+    `A new syllabus for "${subject.name}" was uploaded.`,
+    uploadedById,
+  );
+
+  return file;
 }
 
 /** Load a file and confirm it belongs to the HOD's department. */
@@ -90,8 +134,8 @@ async function getOwnedFileOr404(id, schoolId, departmentId) {
 }
 
 /** HOD: update/replace a syllabus file (new URL and/or title). */
-async function updateSyllabusFile(id, schoolId, departmentId, body) {
-  await getOwnedFileOr404(id, schoolId, departmentId);
+async function updateSyllabusFile(id, schoolId, departmentId, body, actorUserId) {
+  const existing = await getOwnedFileOr404(id, schoolId, departmentId);
 
   const data = {};
   if (body.fileUrl !== undefined) {
@@ -103,7 +147,21 @@ async function updateSyllabusFile(id, schoolId, departmentId, body) {
   if (Object.keys(data).length === 0) {
     throw new AppError(400, "Nothing to update.");
   }
-  return repo.updateById(Number(id), data);
+  const updated = await repo.updateById(Number(id), data);
+
+  // Notify the department that this subject's syllabus was edited.
+  const subject = await prisma.subject.findFirst({
+    where: { id: existing.subjectId, schoolId },
+    select: { name: true },
+  });
+  await notifyDepartmentOfSyllabus(
+    schoolId,
+    departmentId,
+    `The syllabus for "${subject?.name ?? "a subject"}" was updated.`,
+    actorUserId,
+  );
+
+  return updated;
 }
 
 /** HOD: delete a syllabus file. */

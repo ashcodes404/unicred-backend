@@ -39,6 +39,7 @@ const update = asyncHandler(async (req, res) => {
     req.user.schoolId,
     req.faculty.departmentId,
     req.body,
+    req.user.userId,
   );
   return success(res, 200, "Syllabus file updated.", file);
 });

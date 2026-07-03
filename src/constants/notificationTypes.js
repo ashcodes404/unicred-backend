@@ -22,6 +22,10 @@ const NOTIFICATION_TYPES = {
   // when the HOD uploads/replaces their department's timetable file.
   TIMETABLE_UPLOADED: "TIMETABLE_UPLOADED",
 
+  // Sent to every faculty + student of a department when the HOD uploads or
+  // edits a subject's syllabus.
+  SYLLABUS_UPDATED: "SYLLABUS_UPDATED",
+
   HOLIDAY_DECLARED: "HOLIDAY_DECLARED",
   HALF_DAY_DECLARED: "HALF_DAY_DECLARED",
 

@@ -376,15 +376,16 @@ async function updateDepartment(
    * reconcileHodRole ignores null ids and same-as-before
    * cases on its own, so this stays safe for unassignment.
    */
-  if (
-    hodUserId !== undefined &&
-    hodUserId !== previousHodUserId
-  ) {
+  if (hodUserId !== undefined) {
+    // Always reconcile the assigned HOD — even when re-picking the same
+    // person — so a stale "faculty" role (e.g. from seeded data) self-heals
+    // to "hod". reconcileHodRole no-ops on null (the unassign case).
     await reconcileHodRole(hodUserId, schoolId);
-    await reconcileHodRole(
-      previousHodUserId,
-      schoolId
-    );
+
+    // Demote the previous HOD only when they were actually replaced.
+    if (previousHodUserId && previousHodUserId !== hodUserId) {
+      await reconcileHodRole(previousHodUserId, schoolId);
+    }
   }
 
   return departmentRepository.findById(
