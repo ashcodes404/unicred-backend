@@ -59,6 +59,7 @@ const timetableRoutes      =    require("../modules/timetables/timetables.routes
 const adminTimetableRoutes =    require("../modules/timetables/timetables.admin.routes");
 const scheduleExceptionRoutes = require("../modules/schedule-exceptions/schedule-exceptions.routes");
 const facultyAbsenceRoutes    = require("../modules/faculty-absences/faculty-absences.routes");
+const registrationRoutes      = require("../modules/registration/registration.routes");
 /*
 |--------------------------------------------------------------------------
 | Route Registration
@@ -130,7 +131,11 @@ router.use("/schedule-exceptions", scheduleExceptionRoutes);
 
 // Faculty absences — teacher files leave, HOD approves + assigns substitutes
 router.use("/faculty-absences", facultyAbsenceRoutes);
- 
- 
+
+// School registration + payment (Phase 1: plans + temporary registration storage)
+// All public — no account exists yet at this point in the flow.
+router.use("/registration", registrationRoutes);
+
+
 
 module.exports = router;

@@ -12,6 +12,20 @@ model School {
   id                       Int                          @id @default(autoincrement())
   name                     String
   domain                   String                       @unique
+  code                     String?
+  address                  String?
+  city                     String?
+  state                    String?
+  country                  String?
+  pincode                  String?
+  plan                     String?
+  planDurationMonths       Int?
+  subscriptionStartDate    DateTime?
+  subscriptionExpiryDate   DateTime?
+  paymentStatus            SchoolPaymentStatus?         @default(PENDING)
+  subscriptionStatus       SchoolSubscriptionStatus?    @default(PENDING)
+  razorpayOrderId          String?
+  razorpayPaymentId        String?
   createdAt                DateTime                     @default(now())
   deletedAt                DateTime?
   updatedAt                DateTime                     @updatedAt
@@ -38,6 +52,7 @@ model School {
   facultyAbsences          FacultyAbsence[]
   absenceSubstitutions     AbsenceSubstitution[]
 
+  @@index([subscriptionExpiryDate])
   @@map("schools")
 }
 
@@ -380,11 +395,6 @@ model Syllabus {
   @@map("syllabi")
 }
 
-// One uploaded syllabus file (PDF/image) for a subject. Unlike the rich
-// `Syllabus` model above (one-to-one, text + single URL), a subject can have
-// MANY of these — the HOD uploads one or more files per course. Scalar FK
-// columns only (relationMode = "prisma"). departmentId is denormalised from
-// the subject so faculty/student reads can be scoped without an extra join.
 model SyllabusFile {
   id           Int      @id @default(autoincrement())
   schoolId     Int
@@ -563,21 +573,16 @@ model TimetableSlot {
   @@map("timetable_slots")
 }
 
-// A HOD uploads PDF/image timetables for their department. Each document targets
-// an audience: `faculty` (visible to all faculty of the department) or `student`
-// (visible to all students of the department). Multiple documents may exist per
-// department per audience; the HOD can edit or delete each one. Scalar FK columns
-// only — relationMode = "prisma", so no DB-level foreign keys needed.
 model DepartmentTimetable {
   id           Int               @id @default(autoincrement())
   schoolId     Int
   departmentId Int
-  audience     TimetableAudience
-  title        String?
   fileUrl      String            @db.Text
   uploadedById Int
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+  audience     TimetableAudience
+  title        String?
 
   @@index([schoolId])
   @@index([departmentId, audience])
@@ -883,6 +888,76 @@ model AbsenceSubstitution {
   @@map("absence_substitutions")
 }
 
+model PendingRegistration {
+  id           Int                       @id @default(autoincrement())
+  tempId       String                    @unique @default(uuid())
+  schoolData   Json
+  adminData    Json?
+  selectedPlan String
+  planAmount   Float
+  status       PendingRegistrationStatus @default(school_pending)
+  expiresAt    DateTime
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  @@index([expiresAt])
+  @@map("pending_registrations")
+}
+
+model SubscriptionPlan {
+  id             Int      @id @default(autoincrement())
+  name           String
+  durationMonths Int
+  price          Float
+  isCustom       Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("subscription_plans")
+}
+
+model Payment {
+  id                Int           @id @default(autoincrement())
+  tempId            String
+  razorpayOrderId   String        @unique
+  razorpayPaymentId String?
+  razorpaySignature String?
+  amount            Float
+  currency          String        @default("INR")
+  status            PaymentStatus @default(created)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([tempId])
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// SCHOOL REGISTRATION + PAYMENT — PHASE 4
+// One invoice per successful School registration payment. Created by the
+// background "generate-invoice" job (src/jobs/invoice.processor.js), never
+// inline during verify-payment — invoicing must never block or fail that request.
+// ─────────────────────────────────────────────
+model Invoice {
+  id                Int       @id @default(autoincrement())
+  schoolId          Int
+  invoiceNumber     String    @unique
+  amount            Float
+  gst               Float     @default(0)
+  totalAmount       Float
+  razorpayOrderId   String
+  razorpayPaymentId String
+  pdfPath           String?
+  emailedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([schoolId])
+  @@map("invoices")
+}
+
 enum ExceptionType {
   HOLIDAY
   HALF_DAY
@@ -994,4 +1069,35 @@ enum SkillLevel {
   intermediate
   advanced
   expert
+}
+
+enum PendingRegistrationStatus {
+  school_pending
+  admin_pending
+  ready
+  completed
+}
+
+enum PaymentStatus {
+  created
+  paid
+  failed
+}
+
+// ─────────────────────────────────────────────
+// SCHOOL REGISTRATION + PAYMENT — PHASE 3
+// Status of the real School row created after payment is verified.
+// ─────────────────────────────────────────────
+
+enum SchoolPaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum SchoolSubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
 }

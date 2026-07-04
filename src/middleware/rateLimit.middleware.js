@@ -99,8 +99,92 @@ const otpRateLimiter = rateLimit({
 });
 
 
+// ─────────────────────────────────────────────
+// SCHOOL REGISTRATION + PAYMENT — PHASE 7
+// Three tiers, scoped ONLY to the public registration router
+// (see registration.routes.js) — nothing global changes here.
+// ─────────────────────────────────────────────
+
+/**
+ * REGISTRATION READ RATE LIMITER
+ *
+ * Allows 30 requests per IP per minute.
+ * Applied to: GET /api/registration/plans
+ *
+ * This is a read-only, public pricing page — loosest limit of the three.
+ * It still exists to stop a scraping script from hammering it, but a real
+ * visitor reloading the pricing page a few times should never notice it.
+ */
+const registrationReadRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+
+  message: {
+    success: false,
+    message: "Too many requests. Please slow down and try again shortly.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * REGISTRATION FORM RATE LIMITER
+ *
+ * Allows 20 requests per IP per 15 minutes.
+ * Applied to: POST /school-details, POST /admin-details, GET /review/:tempId
+ *
+ * A real user filling out a 2-step signup form might hit "back" and retry a
+ * validation error a few times, or refresh the review screen while deciding
+ * — 20 per 15 minutes comfortably covers that, while still blocking a
+ * script from mass-creating PendingRegistration rows.
+ */
+const registrationFormRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+
+  max: 20,
+
+  message: {
+    success: false,
+    message: "Too many registration attempts. Please try again in a few minutes.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * REGISTRATION PAYMENT RATE LIMITER
+ *
+ * Allows only 5 requests per IP per minute — the tightest limit here.
+ * Applied to: POST /create-order, POST /verify-payment
+ *
+ * These two touch Razorpay's API and, on verify-payment, create a real
+ * School + admin User — they're the highest-value targets for abuse
+ * (hammering Razorpay's test/live API, or brute-forcing signature guesses
+ * against verify-payment). A genuine checkout only ever calls each of
+ * these once or twice per attempt, so 5/minute is generous for a real user
+ * but tight enough to blunt any automated abuse.
+ */
+const registrationPaymentRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+
+  max: 5,
+
+  message: {
+    success: false,
+    message: "Too many payment requests. Please wait a moment and try again.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   loginRateLimiter,
   refreshRateLimiter,
-  otpRateLimiter
+  otpRateLimiter,
+  registrationReadRateLimiter,
+  registrationFormRateLimiter,
+  registrationPaymentRateLimiter,
 };
