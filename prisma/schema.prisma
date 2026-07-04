@@ -899,6 +899,12 @@ model PendingRegistration {
   expiresAt    DateTime
   createdAt    DateTime                  @default(now())
   updatedAt    DateTime                  @updatedAt
+  // ── PHASE 8B — COUPONS (nullable, so existing rows stay valid) ──
+  // Set by POST /api/registration/apply-coupon. createOrder() re-validates
+  // this coupon (it may have expired between apply and pay) and recomputes
+  // the discount fresh from the plan's true base price — this column is
+  // just "which coupon did the user ask to apply," never a trusted amount.
+  couponCode   String?
 
   @@index([expiresAt])
   @@map("pending_registrations")
@@ -920,7 +926,11 @@ model SubscriptionPlan {
 
 model Payment {
   id                Int           @id @default(autoincrement())
-  tempId            String
+  // PHASE 8C: tempId is now nullable — a RENEWAL payment has no
+  // PendingRegistration behind it, so it sets schoolId instead and leaves
+  // tempId null. Every existing/registration Payment keeps using tempId
+  // exactly as before; this only widens the column to allow the new case.
+  tempId            String?
   razorpayOrderId   String        @unique
   razorpayPaymentId String?
   razorpaySignature String?
@@ -929,8 +939,25 @@ model Payment {
   status            PaymentStatus @default(created)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+  // ── PHASE 8C — SUBSCRIPTION RENEWAL (all nullable/defaulted, additive) ──
+  schoolId          Int?           // set for renewals; null for registration payments
+  purpose           PaymentPurpose @default(registration)
+  planId            Int?           // which SubscriptionPlan this payment was for (needed by
+  // the webhook path, which has no request body to read a planId from —
+  // see subscription.service.js's completeRenewalForPayment)
+  // ── PHASE 8E — nullable, so every Payment before this migration reads
+  // back as "unknown" rather than a wrong guess. Populated going forward at
+  // the moment a renewal completes (subscription.repository.js's
+  // completeRenewalTransaction already computes this exact date — it just
+  // never got persisted until now). This is what makes GET
+  // /api/admin/subscription/history able to show "expiry became X" per past
+  // renewal — School itself only ever holds the CURRENT expiry, overwritten
+  // on every renewal, so without this column that history is unrecoverable
+  // once a school has renewed more than once.
+  resultingExpiryDate DateTime?
 
   @@index([tempId])
+  @@index([schoolId])
   @@map("payments")
 }
 
@@ -947,6 +974,19 @@ model Invoice {
   amount            Float
   gst               Float     @default(0)
   totalAmount       Float
+  // ── PHASE 8A — GST breakdown (all nullable so existing rows stay valid) ──
+  baseAmount        Float? // pre-tax plan price
+  cgstAmount        Float? // half of the GST amount (intra-state Central GST)
+  sgstAmount        Float? // half of the GST amount (intra-state State GST)
+  gstRate           Float? // the % rate actually applied — kept per-invoice so a
+  // later GST_RATE env change doesn't silently reinterpret old invoices
+  sellerGstin       String? // our company's GSTIN, from env — null if not yet configured
+  // ── PHASE 8B — COUPONS (all nullable so pre-coupon invoices stay valid) ──
+  couponCode         String? // the coupon code actually applied, or null
+  discountAmount     Float?  // rupees knocked off the plan's base price
+  originalBaseAmount Float?  // the plan's true base price BEFORE the discount
+  // NOTE: `baseAmount` above keeps meaning "the base GST was computed on" —
+  // when a coupon applied, that's the DISCOUNTED base, not originalBaseAmount.
   razorpayOrderId   String
   razorpayPaymentId String
   pdfPath           String?
@@ -956,6 +996,71 @@ model Invoice {
 
   @@index([schoolId])
   @@map("invoices")
+}
+
+// ─────────────────────────────────────────────
+// COUPONS — PHASE 8B
+// A coupon discounts a plan's BASE price; GST is then computed on the
+// DISCOUNTED base (correct Indian GST treatment — tax applies to the actual
+// taxable value after discount, not the pre-discount price). See
+// src/modules/coupons/coupon.service.js for the math + validation rules.
+// ─────────────────────────────────────────────
+model Coupon {
+  id          Int        @id @default(autoincrement())
+  // Always stored UPPERCASE. Every lookup uppercases the caller's input
+  // first (see coupon.service.js), so "save20" and "SAVE20" are the same
+  // coupon — codes are case-insensitive from the user's point of view.
+  code        String     @unique
+  description String?
+  type        CouponType
+  value       Float // percentage: 0-100 meaning "% off"; fixed: flat rupee amount off
+  maxUses     Int? // total redemptions allowed across ALL schools; null = unlimited
+  usedCount   Int        @default(0)
+  maxDiscount Float? // optional cap for percentage coupons, e.g. "20% off up to ₹2000"
+  validFrom   DateTime?
+  validUntil  DateTime?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@map("coupons")
+}
+
+enum CouponType {
+  percentage
+  fixed
+}
+
+// ─────────────────────────────────────────────
+// SUBSCRIPTION EXPIRY REMINDERS — PHASE 8D
+// One row per reminder actually sent. The @@unique below is what guarantees
+// each of the 4 reminders (7/3/1 days before + once after expiry) fires
+// EXACTLY once per subscription cycle — see subscription-reminder.processor.js
+// for how the "insert first, then send" ordering uses this as a claim lock.
+// ─────────────────────────────────────────────
+model SubscriptionReminder {
+  id           Int          @id @default(autoincrement())
+  schoolId     Int
+  reminderType ReminderType
+  // The expiry THIS reminder was for — not just "when it was sent". Part of
+  // the unique key so that once a renewal pushes subscriptionExpiryDate to a
+  // NEW date, the old rows (tied to the OLD date) become irrelevant history
+  // and this school gets a completely fresh set of 4 reminders for the new
+  // cycle — nothing has to be deleted or reset for renewals to "just work".
+  subscriptionExpiryDate DateTime
+  sentAt       DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+
+  @@unique([schoolId, reminderType, subscriptionExpiryDate])
+  @@index([schoolId])
+  @@map("subscription_reminders")
+}
+
+enum ReminderType {
+  DAYS_7
+  DAYS_3
+  DAYS_1
+  EXPIRED
 }
 
 enum ExceptionType {
@@ -1082,6 +1187,14 @@ enum PaymentStatus {
   created
   paid
   failed
+}
+
+// PHASE 8C — what a Payment row is FOR. "registration" is the default so
+// every existing Payment row (all created before this column existed) reads
+// back as "registration" — exactly what they always were.
+enum PaymentPurpose {
+  registration
+  renewal
 }
 
 // ─────────────────────────────────────────────

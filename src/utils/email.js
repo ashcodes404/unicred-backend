@@ -327,9 +327,96 @@ async function sendWelcomeInvoiceEmail({
   });
 }
 
+/**
+ * ---------------------------------------------------
+ * sendSubscriptionReminderEmail()  — PHASE 8D
+ * ---------------------------------------------------
+ *
+ * Purpose:
+ * Warns a school's admin that their subscription is about to expire (7/3/1
+ * days out) or already has (once, right when it happens) — sent by the
+ * subscription-reminder BullMQ job (src/jobs/subscription-reminder.processor.js),
+ * never inline during a request, same reasoning as every other background email.
+ *
+ * Called From:
+ * src/jobs/subscription-reminder.processor.js, via the SAME enqueueEmail()
+ * queue every other email in this app already goes through (see
+ * src/jobs/email.processor.js's HANDLERS map) — no new queue/worker infra
+ * needed just for this email.
+ *
+ * Parameters:
+ * email      -> admin's email address
+ * name       -> admin's name
+ * schoolName -> the school's name
+ * plan       -> plan name, e.g. "1 Year"
+ * expiryDate -> Date — the subscriptionExpiryDate this reminder is about
+ * daysLeft   -> number | null — how many days until expiry, or null when the
+ *               reminder is the "already expired" one (reminderType EXPIRED)
+ * renewalUrl -> where the admin goes to renew (reuses LOGIN_URL from env —
+ *               the admin renews from inside the app after logging in, same
+ *               as every other admin action, so there's no separate "renewal
+ *               page" URL to configure)
+ *
+ * Development:
+ * Prints the email in terminal (same as every other function here) — no
+ * real email is sent, no ESP is wired up.
+ *
+ * Production:
+ * transporter.sendMail() same as the others.
+ *
+ * Returns:
+ * Promise<void>
+ */
+async function sendSubscriptionReminderEmail({
+  email,
+  name,
+  schoolName,
+  plan,
+  expiryDate,
+  daysLeft,
+  renewalUrl,
+}) {
+  // daysLeft === null means this is the "already expired" reminder —
+  // otherwise it's one of the 7/3/1-day-before warnings.
+  const isExpired = daysLeft === null;
+
+  const subject = isExpired
+    ? "Your UniCred subscription has expired"
+    : `Your UniCred subscription expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`;
+
+  const urgencyLine = isExpired
+    ? "Your subscription has expired and your school's account is now restricted until you renew."
+    : `Your subscription expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"} (on ${expiryDate.toDateString()}).`;
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[SUBSCRIPTION REMINDER EMAIL]");
+    console.log("Name:", name);
+    console.log("Email:", email);
+    console.log("School:", schoolName);
+    console.log("Plan:", plan);
+    console.log("Expiry Date:", expiryDate.toDateString());
+    console.log("Days Left:", isExpired ? "expired" : daysLeft);
+    console.log("Renewal URL:", renewalUrl);
+    return;
+  }
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM,
+    to: email,
+    subject,
+    text:
+      `Hello ${name},\n\n` +
+      `${urgencyLine}\n\n` +
+      `School: ${schoolName}\n` +
+      `Plan: ${plan}\n\n` +
+      `Please log in and renew to keep ${schoolName}'s account active: ${renewalUrl}`,
+  });
+}
+
 module.exports = {
 sendVerificationOtp,
 sendPasswordResetOtp,
 sendAccountCreatedEmail,
 sendWelcomeInvoiceEmail,
+sendSubscriptionReminderEmail,
 };

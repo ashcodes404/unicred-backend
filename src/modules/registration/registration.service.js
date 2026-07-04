@@ -30,6 +30,9 @@ const { hashPassword } = require("../../utils/hash"); // bcrypt wrapper — see 
 const razorpay = require("../../config/razorpay"); // shared Razorpay client — see config/razorpay.js
 const { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, LOGIN_URL } = require("../../config/env");
 const { enqueueGenerateInvoice } = require("../../queues/invoice.queue");
+const { calculateGst } = require("../../utils/gst"); // shared base→CGST/SGST/total split — see utils/gst.js
+const couponService = require("../coupons/coupon.service"); // PHASE 8B — shared coupon validation + discount math
+const couponRepository = require("../coupons/coupon.repository"); // PHASE 8B — raw coupon lookup at payment-completion time (see completeRegistrationForPayment)
 
 // How long a PendingRegistration stays valid before the tempId is considered dead.
 const REGISTRATION_EXPIRY_MINUTES = 30;
@@ -201,6 +204,75 @@ async function getRegistrationSummary(tempId) {
   };
 }
 
+/**
+ * WHAT: Validates a coupon code against a PendingRegistration's plan price,
+ *       stores it on that row for later use by createOrder(), and returns a
+ *       full price-breakdown preview for the review screen.
+ * WHY: Powers POST /api/registration/apply-coupon. This does NOT touch
+ *      Coupon.usedCount — a coupon is only ever actually "spent" once a
+ *      payment completes (see completeRegistrationForPayment below), so the
+ *      user can preview/swap coupons freely without consuming redemptions.
+ *
+ * MONEY FLOW: base → apply coupon → discountedBase → calculateGst(discountedBase)
+ *             → total = discountedBase + gst
+ * (see coupon.service.js's computeDiscount() for the full discount math.)
+ *
+ * @param {string} tempId
+ * @param {string} code - raw coupon code as typed by the user (case-insensitive)
+ * RETURNS: Promise<object> - price breakdown for the review screen
+ */
+async function applyCoupon(tempId, code) {
+  const pendingRegistration = await registrationRepository.findByTempId(tempId);
+
+  if (!pendingRegistration) {
+    const err = new Error("Registration session not found. Please start over.");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (isExpired(pendingRegistration)) {
+    const err = new Error("This registration session has expired. Please start over.");
+    err.statusCode = 410;
+    throw err;
+  }
+
+  // The plan's true base price, from OUR OWN stored planAmount — never from
+  // anything the client sends (same rule createOrder() follows below).
+  const originalBaseAmount = pendingRegistration.planAmount;
+
+  // Runs every validity rule (isActive, validFrom/validUntil, usedCount vs
+  // maxUses) and computes the discount — throws a clear error if the coupon
+  // can't be used. Does NOT increment usedCount (see WHY above).
+  const { discountAmount, discountedBase, coupon } = await couponService.validateAndApplyCoupon(
+    code,
+    originalBaseAmount,
+  );
+
+  // Store the (normalized, uppercase) coupon code on the PendingRegistration
+  // so createOrder() knows which coupon to re-validate and charge against.
+  await registrationRepository.attachCouponToPendingRegistration(tempId, coupon.code);
+
+  // GST is computed on the DISCOUNTED base, not the original price — correct
+  // Indian GST treatment (tax applies to the actual taxable value after discount).
+  const gst = calculateGst(discountedBase);
+
+  return {
+    tempId,
+    coupon: {
+      code: coupon.code,
+      type: coupon.type,
+      value: coupon.value,
+    },
+    originalBaseAmount,
+    discountAmount,
+    discountedBase,
+    gstRate: gst.gstRate,
+    cgstAmount: gst.cgstAmount,
+    sgstAmount: gst.sgstAmount,
+    totalAmount: gst.totalAmount, // discountedBase + GST — the new amount payable
+  };
+}
+
 // TODO (later, not part of Phase 1): add a cron job (node-cron is already a
 // dependency) that periodically runs something like:
 //   prisma.pendingRegistration.deleteMany({ where: { expiresAt: { lt: new Date() } } })
@@ -294,9 +366,36 @@ async function createOrder(tempId) {
     };
   }
 
-  // Amount is computed from OUR OWN stored planAmount — never from anything
-  // the client sends — so a tampered request can't pay less than the real price.
-  const amountInPaise = rupeesToPaise(pendingRegistration.planAmount);
+  // Base amount is computed from OUR OWN stored planAmount — never from
+  // anything the client sends — so a tampered request can't pay less than
+  // the real price.
+  let baseForGst = pendingRegistration.planAmount;
+
+  // PHASE 8B — COUPONS: if the user applied a coupon earlier (apply-coupon
+  // endpoint stored its code on this PendingRegistration), re-validate it
+  // HERE, right before charging — it may have expired, been deactivated, or
+  // hit its usage limit in the time between "apply" and "pay". If it's no
+  // longer valid, we fail create-order with a clear message rather than
+  // silently charging the un-discounted price the user didn't expect.
+  if (pendingRegistration.couponCode) {
+    const { discountedBase } = await couponService.validateAndApplyCoupon(
+      pendingRegistration.couponCode,
+      pendingRegistration.planAmount,
+    );
+    baseForGst = discountedBase;
+  }
+
+  // PHASE 8A — GST: the customer must actually pay base + GST, not just the
+  // bare plan price, so calculateGst() (utils/gst.js) turns the base price
+  // into the real amount Razorpay should charge. This is the ONE spot where
+  // the Razorpay order total changed from "bare plan price" to
+  // "plan price + 18% GST" — Payment.amount below now stores that same
+  // GST-inclusive total, since Payment should reflect what was actually charged.
+  //
+  // PHASE 8B — when a coupon applied, baseForGst is already the DISCOUNTED
+  // base (set above) — GST is computed on that, never on the original price.
+  const { totalAmount } = calculateGst(baseForGst);
+  const amountInPaise = rupeesToPaise(totalAmount);
 
   let razorpayOrder;
   try {
@@ -317,7 +416,7 @@ async function createOrder(tempId) {
   const payment = await registrationRepository.createPayment({
     tempId,
     razorpayOrderId: razorpayOrder.id,
-    amount: pendingRegistration.planAmount, // stored in rupees, matching Payment.amount's meaning
+    amount: totalAmount, // GST-inclusive total, in rupees — what Razorpay actually charges
     currency: razorpayOrder.currency,
   });
 
@@ -467,6 +566,35 @@ async function completeRegistrationForPayment(payment, { razorpayPaymentId, razo
   const subscriptionStartDate = new Date();
   const subscriptionExpiryDate = addMonths(subscriptionStartDate, plan.durationMonths);
 
+  // 3.5. PHASE 8B — re-derive the coupon discount for the Invoice + consume
+  //      one use of the coupon. We deliberately do NOT re-run validity
+  //      checks here (isActive/expiry/maxUses) — createOrder() already did
+  //      that right before Razorpay charged the discounted total, and the
+  //      customer's money has already moved. Re-validating now could reject
+  //      an already-paid registration just because the coupon's status
+  //      changed afterward, which would be the wrong outcome. We only need:
+  //        (a) the same discount math, to record accurate Invoice numbers, and
+  //        (b) the coupon's id + maxUses, to atomically consume a use below.
+  let appliedCoupon = null; // passed to createSchoolAndAdmin for the atomic increment
+  let originalBaseAmount = pendingRegistration.planAmount; // the true, pre-discount base
+  let discountAmount = 0;
+  let discountedBaseAmount = pendingRegistration.planAmount;
+
+  if (pendingRegistration.couponCode) {
+    const coupon = await couponRepository.findByCode(pendingRegistration.couponCode);
+
+    // Extremely unlikely, but if the coupon row was hard-deleted between
+    // apply/pay and now, there's nothing left to consume or record against —
+    // we simply fall back to "no discount" rather than failing an
+    // already-paid registration over a missing admin-management row.
+    if (coupon) {
+      const discount = couponService.computeDiscount(coupon, pendingRegistration.planAmount);
+      discountAmount = discount.discountAmount;
+      discountedBaseAmount = discount.discountedBase;
+      appliedCoupon = { id: coupon.id, maxUses: coupon.maxUses };
+    }
+  }
+
   // 4. Create School + admin User atomically — see createSchoolAndAdmin's
   //    own comment in registration.repository.js for why this MUST be one transaction.
   let result;
@@ -482,7 +610,19 @@ async function completeRegistrationForPayment(payment, { razorpayPaymentId, razo
       razorpayPaymentId,
       razorpaySignature,
       tempId: payment.tempId,
+      appliedCoupon,
     });
+
+    // Coupon usage was consumed inside the transaction above. If it came
+    // back false (maxUses hit by a concurrent redemption in the narrow
+    // window between createOrder() and this transaction), the school was
+    // still created successfully — we just log it so it's visible, rather
+    // than silently under-counting redemptions with no trace.
+    if (appliedCoupon && !result.couponConsumed) {
+      console.error(
+        `Coupon "${pendingRegistration.couponCode}" usage was NOT recorded for school ${result.school.id} — maxUses limit was already reached by a concurrent redemption. The discounted payment still succeeded.`,
+      );
+    }
   } catch (transactionErr) {
     // PHASE 7 — RACE CONDITION HARDENING:
     // The pre-check above (findSchoolByDomain / findUserByEmail) handles the
@@ -551,7 +691,18 @@ async function completeRegistrationForPayment(payment, { razorpayPaymentId, razo
   // remaining gap is intentionally left as-is for now (recoverable via a
   // manual invoice run later) rather than adding extra machinery here.
   try {
-    await enqueueGenerateInvoice({ schoolId: result.school.id, paymentId: payment.id });
+    // PHASE 8B — pass the coupon breakdown through to the invoice job so it
+    // can record couponCode/discountAmount/originalBaseAmount on the Invoice
+    // and compute GST on the DISCOUNTED base, instead of re-deriving (or
+    // guessing) the discount later. These are all null/0 when no coupon applied.
+    await enqueueGenerateInvoice({
+      schoolId: result.school.id,
+      paymentId: payment.id,
+      couponCode: pendingRegistration.couponCode || null,
+      discountAmount,
+      originalBaseAmount,
+      discountedBaseAmount,
+    });
   } catch (enqueueErr) {
     console.error(
       `Failed to enqueue invoice generation for school ${result.school.id}:`,
@@ -717,6 +868,26 @@ async function handleWebhookPaymentCaptured({ razorpayOrderId, razorpayPaymentId
     return { alreadyProcessed: true };
   }
 
+  // PHASE 8C — a Payment can now be for a subscription RENEWAL, not just a
+  // new registration. purpose defaults to "registration" for every payment
+  // row created before this column existed, so old behavior is untouched.
+  // required() here (not a top-of-file require) deliberately, so that this
+  // module and subscription.service.js can each require the other's
+  // exports (isValidRazorpaySignature/rupeesToPaise this way, this webhook
+  // branch the other way) without a circular-require load-order problem —
+  // by the time this function actually RUNS, both modules have already
+  // finished loading.
+  if (payment.purpose === "renewal") {
+    const subscriptionService = require("../subscription/subscription.service");
+    // Merge in the webhook's razorpayPaymentId — the `payment` row fetched
+    // above still has whatever it was created with (null, until someone
+    // completes it), so without this override a renewal completed purely
+    // via webhook (browser never called renew-verify) would record a null
+    // razorpayPaymentId instead of the real one Razorpay just reported.
+    const result = await subscriptionService.completeRenewalForPayment({ ...payment, razorpayPaymentId });
+    return { alreadyProcessed: result.alreadyProcessed, schoolId: result.schoolId };
+  }
+
   // Not yet paid — this webhook is the one completing the registration.
   // razorpaySignature is null here: webhooks don't carry the checkout's
   // per-payment signature field, and this payment's authenticity was
@@ -734,8 +905,15 @@ module.exports = {
   submitSchoolDetails,
   submitAdminDetails,
   getRegistrationSummary,
+  applyCoupon,
   createOrder,
   verifyPayment,
   isValidWebhookSignature,
   handleWebhookPaymentCaptured,
+  // PHASE 8C — exported (unchanged) so subscription.service.js can reuse the
+  // exact same signature-verify + rupee→paise + date-math logic instead of
+  // duplicating it.
+  isValidRazorpaySignature,
+  rupeesToPaise,
+  addMonths,
 };

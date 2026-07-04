@@ -151,6 +151,37 @@ async function getReviewHandler(req, res, next) {
 }
 
 /**
+ * WHAT: POST /api/registration/apply-coupon
+ * WHY: Lets the user apply a coupon code on the review screen before
+ *      paying. Validates the coupon, stores it on the PendingRegistration
+ *      (so create-order uses it), and returns the full price breakdown
+ *      (original base, discount, discounted base, GST, new total) so the
+ *      frontend can show the updated price. Does NOT consume a redemption —
+ *      only a completed payment does that.
+ * RETURNS: 200 + price breakdown.
+ */
+async function applyCouponHandler(req, res, next) {
+  try {
+    const { tempId, code } = req.body;
+
+    const requiredFields = { tempId, code };
+    const missingFields = Object.entries(requiredFields)
+      .filter(([, value]) => value === undefined || value === null || value === "")
+      .map(([key]) => key);
+
+    if (missingFields.length > 0) {
+      return error(res, 400, `Missing required field(s): ${missingFields.join(", ")}`);
+    }
+
+    const breakdown = await registrationService.applyCoupon(tempId, code);
+
+    return success(res, 200, "Coupon applied successfully", breakdown);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * WHAT: POST /api/registration/create-order
  * WHY: Once school + admin details are both submitted (status "ready"),
  *      this creates a Razorpay TEST MODE order and returns what the
@@ -305,6 +336,7 @@ module.exports = {
   submitSchoolDetailsHandler,
   submitAdminDetailsHandler,
   getReviewHandler,
+  applyCouponHandler,
   createOrderHandler,
   verifyPaymentHandler,
   webhookHandler,

@@ -14,6 +14,7 @@
  */
 
 const prisma = require("../../config/db");
+const couponRepository = require("../coupons/coupon.repository"); // PHASE 8B — reused for the atomic usedCount increment inside createSchoolAndAdmin's transaction
 
 // ─────────────────────────────────────────────
 // SUBSCRIPTION PLAN
@@ -95,6 +96,22 @@ async function attachAdminData(tempId, adminData) {
       adminData,
       status: "ready",
     },
+  });
+}
+
+/**
+ * WHAT: Stores which coupon code the user asked to apply onto an existing
+ *       PendingRegistration row.
+ * WHY: Powers POST /api/registration/apply-coupon — createOrder() reads this
+ *      back later to know which coupon to re-validate and charge against.
+ *      This column is just "which coupon was requested," never a trusted
+ *      discount amount — every amount is always recomputed server-side.
+ * RETURNS: Promise<PendingRegistration> — the updated row.
+ */
+async function attachCouponToPendingRegistration(tempId, couponCode) {
+  return prisma.pendingRegistration.update({
+    where: { tempId },
+    data: { couponCode },
   });
 }
 
@@ -227,7 +244,13 @@ async function findUserByEmail(email) {
  * @param {string} params.razorpayPaymentId
  * @param {string} params.razorpaySignature
  * @param {string} params.tempId
- * RETURNS: Promise<{ school: School, admin: User }>
+ * @param {object|null} [params.appliedCoupon] - PHASE 8B, optional. When the
+ *        registration used a coupon, pass { id, maxUses } (the Coupon row's
+ *        id + its maxUses limit) so usedCount can be incremented atomically
+ *        INSIDE this same transaction — a coupon must only ever be consumed
+ *        alongside a real, completed registration, never on its own.
+ * RETURNS: Promise<{ school: School, admin: User, couponConsumed: boolean }>
+ *          couponConsumed is always false when appliedCoupon wasn't passed.
  */
 async function createSchoolAndAdmin({
   schoolData,
@@ -240,6 +263,7 @@ async function createSchoolAndAdmin({
   razorpayPaymentId,
   razorpaySignature,
   tempId,
+  appliedCoupon = null,
 }) {
   // prisma.$transaction(async (tx) => {...}) opens one database transaction
   // and gives us `tx` — a Prisma client whose queries all run inside it.
@@ -288,12 +312,22 @@ async function createSchoolAndAdmin({
     });
 
     // 3. Flip the Payment row to "paid" and store the proof-of-payment fields.
+    //
+    // PHASE 8E: also stamp schoolId onto this row now that school.id exists.
+    // Without this, a REGISTRATION Payment never gets a schoolId at all
+    // (only renewal Payments set it — see Phase 8C's schema comment), so
+    // GET /api/admin/payments (which queries `where: { schoolId }`) would
+    // permanently be unable to show a school's very first payment. This one
+    // extra field on an already-happening update makes Payment.schoolId a
+    // reliable "which school does this payment belong to" link for BOTH
+    // registration and renewal payments alike, going forward.
     await tx.payment.update({
       where: { razorpayOrderId },
       data: {
         status: "paid",
         razorpayPaymentId,
         razorpaySignature,
+        schoolId: school.id,
       },
     });
 
@@ -304,7 +338,29 @@ async function createSchoolAndAdmin({
       data: { status: "completed" },
     });
 
-    return { school, admin };
+    // 5. PHASE 8B — consume one use of the coupon (if any), atomically,
+    //    INSIDE this same transaction — so a coupon is only ever consumed
+    //    alongside a School that actually got created, never on its own,
+    //    and never twice for the same registration.
+    //
+    //    couponConsumed can come back false in the rare race where a
+    //    concurrent redemption used up the last slot between createOrder()
+    //    (which already re-validated the coupon and charged the discounted
+    //    price via Razorpay) and this transaction. We do NOT fail the
+    //    registration over that — the customer already paid the discounted
+    //    total; the school/admin creation must still go through. We just
+    //    surface couponConsumed=false so the caller can log it for
+    //    visibility (see registration.service.js).
+    let couponConsumed = false;
+    if (appliedCoupon) {
+      couponConsumed = await couponRepository.incrementUsedCountAtomic(
+        tx,
+        appliedCoupon.id,
+        appliedCoupon.maxUses,
+      );
+    }
+
+    return { school, admin, couponConsumed };
   });
 }
 
@@ -314,6 +370,7 @@ module.exports = {
   createPendingRegistration,
   findByTempId,
   attachAdminData,
+  attachCouponToPendingRegistration,
   findCreatedPaymentByTempId,
   createPayment,
   findPaymentByOrderId,

@@ -10,6 +10,7 @@
 //   POST /api/registration/school-details      — step 1: save school info, get tempId
 //   POST /api/registration/admin-details        — step 2: save admin info against tempId
 //   GET  /api/registration/review/:tempId      — step 3: combined summary before payment
+//   POST /api/registration/apply-coupon         — optional: validate + preview a coupon (Phase 8B)
 //   POST /api/registration/create-order         — step 4: create a Razorpay TEST MODE order
 //   POST /api/registration/verify-payment       — step 5: verify signature, create School + admin User
 //
@@ -35,6 +36,7 @@ const {
   submitSchoolDetailsHandler,
   submitAdminDetailsHandler,
   getReviewHandler,
+  applyCouponHandler,
   createOrderHandler,
   verifyPaymentHandler,
 } = require("./registration.controller");
@@ -51,6 +53,11 @@ router.get("/plans", registrationReadRateLimiter, getPlansHandler);
 router.post("/school-details", registrationFormRateLimiter, submitSchoolDetailsHandler);
 router.post("/admin-details", registrationFormRateLimiter, submitAdminDetailsHandler);
 router.get("/review/:tempId", registrationFormRateLimiter, getReviewHandler);
+// PHASE 8B — the tight payment-tier limiter (5/min) is used here, not the
+// looser form tier, because this endpoint lets someone guess coupon codes
+// one at a time — the same "money-sensitive, must be hard to brute-force"
+// reasoning as create-order/verify-payment below.
+router.post("/apply-coupon", registrationPaymentRateLimiter, applyCouponHandler);
 router.post("/create-order", registrationPaymentRateLimiter, createOrderHandler);
 router.post("/verify-payment", registrationPaymentRateLimiter, verifyPaymentHandler);
 

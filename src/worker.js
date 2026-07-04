@@ -7,12 +7,16 @@ const { startResultsPublishWorker } = require("./workers/results-publish.worker"
 const { startInvoiceWorker } = require("./workers/invoice.worker");
 const { startPendingRegistrationCleanupWorker } = require("./workers/pending-registration-cleanup.worker");
 const { schedulePendingRegistrationCleanup } = require("./queues/pending-registration-cleanup.queue");
+// PHASE 8D — subscription expiry reminders, same repeatable-schedule pattern as the cleanup job above
+const { startSubscriptionReminderWorker } = require("./workers/subscription-reminder.worker");
+const { scheduleSubscriptionReminders } = require("./queues/subscription-reminder.queue");
 
 const workers = [
   startEmailWorker(),
   startResultsPublishWorker(),
   startInvoiceWorker(),
   startPendingRegistrationCleanupWorker(),
+  startSubscriptionReminderWorker(),
 ].filter(Boolean);
 
 // Register the recurring cleanup schedule now that its worker is running.
@@ -20,6 +24,11 @@ const workers = [
 // repeat config and won't create a duplicate schedule (see the queue file's comment).
 schedulePendingRegistrationCleanup().catch((err) => {
   console.error("Failed to schedule pending-registration cleanup:", err.message);
+});
+
+// PHASE 8D — same "safe to call on every restart" reasoning as the cleanup schedule above.
+scheduleSubscriptionReminders().catch((err) => {
+  console.error("Failed to schedule subscription reminders:", err.message);
 });
 
 console.log(`Worker process started (${workers.length} queue(s) active).`);

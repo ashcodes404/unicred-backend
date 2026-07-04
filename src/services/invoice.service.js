@@ -56,9 +56,17 @@ function generateInvoiceNumber(schoolId) {
  * @param {number} invoiceData.durationMonths
  * @param {Date}   invoiceData.startDate
  * @param {Date}   invoiceData.expiryDate
- * @param {number} invoiceData.amount           - amount paid, in rupees
- * @param {number} invoiceData.gst
+ * @param {number} invoiceData.amount           - amount paid, in rupees (GST-inclusive total)
+ * @param {number} invoiceData.gst              - combined CGST + SGST
  * @param {number} invoiceData.totalAmount
+ * @param {number} invoiceData.baseAmount       - PHASE 8A: pre-tax plan price
+ * @param {number} invoiceData.cgstAmount       - PHASE 8A: half of gst (Central GST)
+ * @param {number} invoiceData.sgstAmount       - PHASE 8A: half of gst (State GST)
+ * @param {number} invoiceData.gstRate          - PHASE 8A: % rate applied, e.g. 18
+ * @param {string|null} invoiceData.sellerGstin - PHASE 8A: our company's GSTIN, or null if unset
+ * @param {string|null} invoiceData.couponCode - PHASE 8B: coupon applied, or null
+ * @param {number|null} invoiceData.discountAmount - PHASE 8B: rupees knocked off the base
+ * @param {number|null} invoiceData.originalBaseAmount - PHASE 8B: base price BEFORE the discount
  * @param {string} invoiceData.razorpayPaymentId
  * @param {string} invoiceData.razorpayOrderId
  * @param {Date}   invoiceData.transactionDate
@@ -105,11 +113,37 @@ async function buildInvoicePdf(invoiceData) {
   doc.text(`Subscription Expiry: ${invoiceData.expiryDate.toDateString()}`);
   doc.moveDown();
 
+  // PHASE 8B — coupon discount line. Only printed when a coupon was
+  // actually applied (couponCode != null) — most invoices have none.
+  if (invoiceData.couponCode) {
+    doc.text(`Coupon Applied: ${invoiceData.couponCode}`);
+    doc.text(`Original Base Amount: Rs. ${invoiceData.originalBaseAmount.toFixed(2)}`);
+    doc.text(`Discount: -Rs. ${invoiceData.discountAmount.toFixed(2)}`);
+    doc.moveDown();
+  }
+
+  // PHASE 8A — GST tax breakdown. baseAmount/cgstAmount/sgstAmount/gstRate
+  // are only present on invoices generated after this phase shipped —
+  // older Invoice rows have them as null, so we skip this section rather
+  // than print "Rs. NaN" for historical invoices.
+  if (invoiceData.baseAmount != null) {
+    const baseLabel = invoiceData.couponCode ? "Base Amount (after discount)" : "Base Amount";
+    doc.text(`${baseLabel}: Rs. ${invoiceData.baseAmount.toFixed(2)}`);
+    doc.text(`CGST (${(invoiceData.gstRate / 2).toFixed(2)}%): Rs. ${invoiceData.cgstAmount.toFixed(2)}`);
+    doc.text(`SGST (${(invoiceData.gstRate / 2).toFixed(2)}%): Rs. ${invoiceData.sgstAmount.toFixed(2)}`);
+    doc.moveDown();
+  }
+
   doc.text(`Amount Paid: Rs. ${invoiceData.amount.toFixed(2)}`);
   doc.text(`GST: Rs. ${invoiceData.gst.toFixed(2)}`);
   doc.fontSize(12).text(`Total Amount: Rs. ${invoiceData.totalAmount.toFixed(2)}`, { underline: true });
   doc.fontSize(11);
   doc.moveDown();
+
+  if (invoiceData.sellerGstin) {
+    doc.text(`Seller GSTIN: ${invoiceData.sellerGstin}`);
+    doc.moveDown();
+  }
 
   doc.text(`Razorpay Payment ID: ${invoiceData.razorpayPaymentId}`);
   doc.text(`Razorpay Order ID: ${invoiceData.razorpayOrderId}`);

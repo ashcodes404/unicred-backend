@@ -60,6 +60,10 @@ const adminTimetableRoutes =    require("../modules/timetables/timetables.admin.
 const scheduleExceptionRoutes = require("../modules/schedule-exceptions/schedule-exceptions.routes");
 const facultyAbsenceRoutes    = require("../modules/faculty-absences/faculty-absences.routes");
 const registrationRoutes      = require("../modules/registration/registration.routes");
+const couponRoutes            = require("../modules/coupons/coupon.routes");
+const subscriptionRoutes      = require("../modules/subscription/subscription.routes");
+const invoiceRoutes           = require("../modules/invoices/invoice.routes");
+const paymentRoutes           = require("../modules/payments/payment.routes");
 /*
 |--------------------------------------------------------------------------
 | Route Registration
@@ -135,6 +139,16 @@ router.use("/faculty-absences", facultyAbsenceRoutes);
 // School registration + payment (Phase 1: plans + temporary registration storage)
 // All public — no account exists yet at this point in the flow.
 router.use("/registration", registrationRoutes);
+
+// Coupon management (Phase 8B) — admin-only, platform-wide (not per-school)
+router.use("/admin/coupons", couponRoutes);
+
+// Subscription renewal (Phase 8C) — admin-only, scoped to the admin's own school
+router.use("/admin/subscription", subscriptionRoutes);
+
+// Admin dashboard: invoices + payments (Phase 8E) — admin-only, scoped to the admin's own school
+router.use("/admin/invoices", invoiceRoutes);
+router.use("/admin/payments", paymentRoutes);
 
 
 

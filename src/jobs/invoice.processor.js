@@ -13,9 +13,11 @@
 // Invoice rows, duplicate PDFs, or duplicate emails — see the comments below.
 
 const prisma = require("../config/db");
-const { LOGIN_URL } = require("../config/env");
+const { LOGIN_URL, GST_RATE, GST_SELLER_GSTIN } = require("../config/env");
 const { sendWelcomeInvoiceEmail } = require("../utils/email");
 const { generateInvoiceNumber, buildInvoicePdf } = require("../services/invoice.service");
+const { calculateGst } = require("../utils/gst"); // shared base→CGST/SGST/total split — see utils/gst.js
+const registrationRepository = require("../modules/registration/registration.repository"); // reused only for findPlanByName
 
 /**
  * WHAT: Finds an existing Invoice for this school's payment, or creates one
@@ -29,17 +31,48 @@ const { generateInvoiceNumber, buildInvoicePdf } = require("../services/invoice.
  *      invoice (6 random base36 characters) — if Prisma reports a unique
  *      constraint violation (error code "P2002") on create, we just
  *      generate a fresh number and try again.
+ * @param {object} params
+ * @param {object} params.school
+ * @param {object} params.payment
+ * @param {string|null} [params.couponCode] - PHASE 8B, set when a coupon was applied
+ * @param {number} [params.discountAmount] - PHASE 8B, rupees knocked off the base (0 if no coupon)
+ * @param {number|null} [params.originalBaseAmount] - PHASE 8B, plan's true base BEFORE discount
+ * @param {number|null} [params.discountedBaseAmount] - PHASE 8B, base AFTER discount — what GST is computed on
  * RETURNS: Promise<Invoice>
  */
-async function findOrCreateInvoice({ school, payment }) {
+async function findOrCreateInvoice({
+  school,
+  payment,
+  couponCode = null,
+  discountAmount = 0,
+  originalBaseAmount = null,
+  discountedBaseAmount = null,
+}) {
   const existing = await prisma.invoice.findFirst({
     where: { schoolId: school.id, razorpayOrderId: payment.razorpayOrderId },
   });
   if (existing) return existing;
 
-  const gst = 0; // real GST calculation is Phase 8 — always 0 for now
-  const amount = payment.amount;
-  const totalAmount = amount + gst;
+  // PHASE 8A — GST breakdown.
+  // We want the ORIGINAL pre-tax plan price, not a reverse-divided guess —
+  // so we reuse the same SubscriptionPlan lookup registration.service.js's
+  // createOrder() used when this order was first created.
+  const plan = await registrationRepository.findPlanByName(school.plan);
+
+  // Extremely unlikely fallback: only reachable if the plan was deactivated
+  // in the few seconds between payment and invoicing. Derives the base
+  // price back out of the GST-inclusive total actually charged, using the
+  // currently configured rate, so an invoice can still be produced.
+  const fallbackBaseAmount = plan ? plan.price : payment.amount / (1 + GST_RATE / 100);
+
+  // PHASE 8B — if a coupon was applied, registration.service.js already
+  // computed the discounted base at payment-completion time and passed it
+  // through the job payload — GST must be computed on THAT (discounted)
+  // base, never the original plan price. When no coupon applied,
+  // discountedBaseAmount is null and we fall back to the pre-8B behavior.
+  const baseAmount = discountedBaseAmount != null ? discountedBaseAmount : fallbackBaseAmount;
+
+  const { gstRate, gstAmount, cgstAmount, sgstAmount, totalAmount } = calculateGst(baseAmount);
 
   // Retry a handful of times in the extremely unlikely event of an
   // invoiceNumber collision with another school's invoice.
@@ -50,9 +83,19 @@ async function findOrCreateInvoice({ school, payment }) {
         data: {
           schoolId: school.id,
           invoiceNumber: generateInvoiceNumber(school.id),
-          amount,
-          gst,
+          amount: totalAmount, // "amount actually paid" — GST-inclusive, matches Payment.amount
+          gst: gstAmount, // combined CGST + SGST
           totalAmount,
+          baseAmount, // the DISCOUNTED base GST was computed on (== fallbackBaseAmount when no coupon)
+          cgstAmount,
+          sgstAmount,
+          gstRate,
+          sellerGstin: GST_SELLER_GSTIN,
+          // PHASE 8B — null/0 for every pre-coupon invoice and every invoice
+          // with no coupon applied.
+          couponCode,
+          discountAmount,
+          originalBaseAmount: originalBaseAmount != null ? originalBaseAmount : fallbackBaseAmount,
           razorpayOrderId: payment.razorpayOrderId,
           razorpayPaymentId: payment.razorpayPaymentId,
         },
@@ -73,9 +116,20 @@ async function findOrCreateInvoice({ school, payment }) {
  * @param {object} data
  * @param {number} data.schoolId
  * @param {number} data.paymentId - Payment.id (the local DB row, not the Razorpay id)
+ * @param {string|null} [data.couponCode] - PHASE 8B, set when a coupon was applied
+ * @param {number} [data.discountAmount] - PHASE 8B, rupees knocked off the base
+ * @param {number|null} [data.originalBaseAmount] - PHASE 8B, plan's true base BEFORE discount
+ * @param {number|null} [data.discountedBaseAmount] - PHASE 8B, base AFTER discount
  * RETURNS: Promise<void>
  */
-async function processGenerateInvoiceJob({ schoolId, paymentId }) {
+async function processGenerateInvoiceJob({
+  schoolId,
+  paymentId,
+  couponCode = null,
+  discountAmount = 0,
+  originalBaseAmount = null,
+  discountedBaseAmount = null,
+}) {
   // 1. Load school + payment + admin. These were all created together in
   //    Phase 3's transaction, so if any is missing something is seriously
   //    wrong — throwing here lets BullMQ log it clearly and retry.
@@ -93,7 +147,14 @@ async function processGenerateInvoiceJob({ schoolId, paymentId }) {
   if (!admin) throw new Error(`Invoice job: admin User for school ${schoolId} not found`);
 
   // 2. Create (or reuse, on retry) the Invoice row.
-  let invoice = await findOrCreateInvoice({ school, payment });
+  let invoice = await findOrCreateInvoice({
+    school,
+    payment,
+    couponCode,
+    discountAmount,
+    originalBaseAmount,
+    discountedBaseAmount,
+  });
 
   // 3. Generate the PDF — skip if a previous attempt already made one.
   if (!invoice.pdfPath) {
@@ -108,6 +169,14 @@ async function processGenerateInvoiceJob({ schoolId, paymentId }) {
       amount: invoice.amount,
       gst: invoice.gst,
       totalAmount: invoice.totalAmount,
+      baseAmount: invoice.baseAmount,
+      cgstAmount: invoice.cgstAmount,
+      sgstAmount: invoice.sgstAmount,
+      gstRate: invoice.gstRate,
+      sellerGstin: invoice.sellerGstin,
+      couponCode: invoice.couponCode,
+      discountAmount: invoice.discountAmount,
+      originalBaseAmount: invoice.originalBaseAmount,
       razorpayPaymentId: invoice.razorpayPaymentId,
       razorpayOrderId: invoice.razorpayOrderId,
       transactionDate: invoice.createdAt,

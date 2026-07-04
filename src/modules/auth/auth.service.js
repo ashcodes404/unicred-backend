@@ -41,6 +41,7 @@ const {
 const { signAccessToken } = require("../../utils/jwt");
 const { writeAuditLog, AUDIT_EVENTS } = require("../../utils/audit");
 const { REFRESH_TOKEN_EXPIRES_DAYS } = require("../../config/env");
+const { isSchoolExpired } = require("../../utils/schoolSubscription"); // PHASE 8C — shared expiry check, reused by the route-gate middleware too
 
 const { enqueueEmail } = require("../../queues/email.queue");
 
@@ -658,6 +659,35 @@ async function login({ email, password }, deviceInfo = {}) {
     });
     const err = new Error("Invalid email or password");
     err.statusCode = 401;
+    throw err;
+  }
+
+  /**
+   * --------------------------------------------------------
+   * PHASE 8C — SUBSCRIPTION EXPIRY GATE
+   * --------------------------------------------------------
+   * Runs AFTER the password check succeeds (so a wrong password still just
+   * gets "Invalid email or password" — we never leak subscription state to
+   * someone who hasn't proven they own this account) but BEFORE any tokens
+   * are issued.
+   *
+   * Rule: if this user's school has expired, ONLY an admin may still log
+   * in (so they can renew it). Students/faculty/hod are fully locked out —
+   * an expired school is frozen for everyone except the person who can fix it.
+   */
+  const school = await prisma.school.findUnique({ where: { id: user.schoolId } });
+
+  if (isSchoolExpired(school) && user.role !== "admin") {
+    await writeAuditLog({
+      userId: user.id,
+      schoolId: user.schoolId,
+      action: AUDIT_EVENTS.LOGIN_FAILED,
+      ipAddress: deviceInfo.ipAddress,
+      userAgent: deviceInfo.deviceName,
+      metadata: { reason: "school subscription expired", role: user.role },
+    });
+    const err = new Error("Your school's subscription has expired. Please contact your admin.");
+    err.statusCode = 403;
     throw err;
   }
 

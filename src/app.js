@@ -5,6 +5,7 @@ const cookieParser = require("cookie-parser");
 const routes = require("./routes/index");
 const errorMiddleware = require("./middleware/error.middleware");
 const { webhookHandler } = require("./modules/registration/registration.controller");
+const subscriptionGate = require("./middleware/subscriptionGate.middleware"); // PHASE 8C — see that file for why this is global instead of per-route
 
 const app = express();
 
@@ -37,6 +38,12 @@ app.post("/api/registration/webhook", express.raw({ type: "application/json" }),
 
 app.use(express.json());
 app.use(cookieParser());
+
+// PHASE 8C — restricts an admin of an expired-subscription school to only
+// the renewal/status/logout routes. Placed after the webhook (which never
+// carries an admin Bearer token, so it's unaffected) and before every /api
+// route. See subscriptionGate.middleware.js for the full reasoning.
+app.use(subscriptionGate);
 
 app.get("/health", (req, res) => {
   res.status(200).json({
