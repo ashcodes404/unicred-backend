@@ -20,7 +20,7 @@ function attachTenant(req, res, next) {
     });
   }
 
-  req.schoolId = req.user.schoolId;
+  req.schoolId = Number(req.user.schoolId);
   next();
 }
 

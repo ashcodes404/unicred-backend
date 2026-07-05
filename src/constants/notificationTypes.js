@@ -1,0 +1,47 @@
+const NOTIFICATION_TYPES = {
+  RESULT_PUBLISHED: "RESULT_PUBLISHED",
+  RESULT_FAIL: "RESULT_FAIL",
+
+  REAPPEAR_APPROVED: "REAPPEAR_APPROVED",
+  REAPPEAR_REJECTED: "REAPPEAR_REJECTED",
+
+  ACHIEVEMENT_APPROVED: "ACHIEVEMENT_APPROVED",
+  ACHIEVEMENT_REJECTED: "ACHIEVEMENT_REJECTED",
+
+  // Sent to each faculty a student picks to verify their achievement.
+  ACHIEVEMENT_REVIEW_REQUESTED: "ACHIEVEMENT_REVIEW_REQUESTED",
+  ACHIEVEMENT_ASSIGNED: "ACHIEVEMENT_ASSIGNED",
+
+  SUBJECT_ASSIGNED: "SUBJECT_ASSIGNED",
+
+  TIMETABLE_SUBMITTED: "TIMETABLE_SUBMITTED",
+  TIMETABLE_APPROVED: "TIMETABLE_APPROVED",
+  TIMETABLE_RETURNED: "TIMETABLE_RETURNED",
+
+  // Sent to every faculty + student of a department (except the uploading HOD)
+  // when the HOD uploads/replaces their department's timetable file.
+  TIMETABLE_UPLOADED: "TIMETABLE_UPLOADED",
+
+  // Sent to every faculty + student of a department when the HOD uploads or
+  // edits a subject's syllabus.
+  SYLLABUS_UPDATED: "SYLLABUS_UPDATED",
+
+  HOLIDAY_DECLARED: "HOLIDAY_DECLARED",
+  HALF_DAY_DECLARED: "HALF_DAY_DECLARED",
+
+  ABSENCE_APPLIED: "ABSENCE_APPLIED",
+  ABSENCE_APPROVED: "ABSENCE_APPROVED",
+  ABSENCE_REJECTED: "ABSENCE_REJECTED",
+  SUBSTITUTE_ASSIGNED: "SUBSTITUTE_ASSIGNED",
+
+  // Sent to every user in an announcement's target audience — the whole
+  // school (admin), one department (HOD), or a faculty's current students.
+  ANNOUNCEMENT_POSTED: "ANNOUNCEMENT_POSTED",
+
+  // Sent to literally every user in the school when the admin switches
+  // the school's grading method (absolute <-> relative). Only affects
+  // marks submitted from this point on, never already-computed results.
+  GRADING_METHOD_CHANGED: "GRADING_METHOD_CHANGED",
+};
+
+module.exports = NOTIFICATION_TYPES;

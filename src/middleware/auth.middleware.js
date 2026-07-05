@@ -26,9 +26,9 @@ function authenticate(req, res, next) {
 
     // Attach decoded user info to the request for use in later middleware/controllers
     req.user = {
-      userId: decoded.userId,
+      userId: Number(decoded.userId),
       role: decoded.role,
-      schoolId: decoded.schoolId,
+      schoolId: Number(decoded.schoolId),
     };
 
     next();
