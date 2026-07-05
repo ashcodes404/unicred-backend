@@ -6,7 +6,10 @@ const departmentRepository = require(
   "../departments/departments.repository"
 );
 
+const userRepository = require("../users/users.repository");
+
 const { cached, invalidate } = require("../../utils/cache");
+const { parsePagination, buildPaginationMeta } = require("../../utils/pagination");
 
 /**
  * FACULTY SERVICE
@@ -58,13 +61,29 @@ const { cached, invalidate } = require("../../utils/cache");
  * departmentId is optional — when provided, narrows
  * the directory to one department.
  */
-async function getAllFaculty(schoolId, departmentId) {
-  return cached(
-    `fac:${schoolId}:all:${departmentId ?? ""}`,
+// query.page/query.limit are optional — only the admin's whole-school
+// Faculties list page sends them. Every other caller (HOD's own-department
+// picker, invite-page dropdown, dashboard stat) omits them and keeps
+// getting the full list back, unchanged — see findAllBySchool's own comment.
+async function getAllFaculty(schoolId, departmentId, query = {}) {
+  const paginated = query.page !== undefined || query.limit !== undefined;
+  if (!paginated) {
+    return cached(
+      `fac:${schoolId}:all:${departmentId ?? ""}`,
+      null,
+      () => facultyRepository.findAllBySchool(schoolId, departmentId),
+      `fac:${schoolId}`
+    );
+  }
+
+  const { page, limit, skip } = parsePagination(query);
+  const { rows, total } = await cached(
+    `fac:${schoolId}:all:${departmentId ?? ""}:${page}:${limit}`,
     null,
-    () => facultyRepository.findAllBySchool(schoolId, departmentId),
+    () => facultyRepository.findAllBySchool(schoolId, departmentId, { skip, limit }),
     `fac:${schoolId}`
   );
+  return { faculty: rows, pagination: buildPaginationMeta(page, limit, total) };
 }
 
 /**
@@ -107,6 +126,18 @@ async function getFacultyById(facultyId, schoolId) {
  * schoolId comes from JWT, never from frontend.
  */
 async function createFaculty(facultyData, schoolId) {
+  // BUG FIX (cross-tenant IDOR): this never used to check that the target
+  // user actually belongs to the admin's own school — facultyRepository's
+  // findByUserId() has no schoolId filter (it's a global existence check),
+  // and departmentRepository.findById() only verifies the DEPARTMENT
+  // belongs to this school, not the USER. Without this check, an admin of
+  // School A could pass the userId of a School B user and link them into
+  // School A as faculty.
+  const targetUser = await userRepository.findById(facultyData.userId, schoolId);
+  if (!targetUser) {
+    throw new Error("User not found in this school");
+  }
+
   const existingFaculty =
     await facultyRepository.findByUserId(
       facultyData.userId

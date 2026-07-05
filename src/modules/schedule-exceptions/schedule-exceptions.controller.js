@@ -62,7 +62,7 @@ const listExceptions = asyncHandler(async (req, res) => {
 const getExceptionById = asyncHandler(async (req, res) => {
   const exception = await service.getExceptionById(
     req.params.id,
-    req.user.schoolId,
+    buildContext(req),
   );
   return success(res, 200, "Schedule exception fetched.", exception);
 });

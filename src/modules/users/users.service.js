@@ -1,5 +1,6 @@
 const userRepository = require("./users.repository");
 const { cached, invalidate } = require("../../utils/cache");
+const { parsePagination, buildPaginationMeta } = require("../../utils/pagination");
 
 /**
  * USER SERVICE
@@ -111,13 +112,18 @@ async function updateOwnProfile(currentUser, updateData) {
  * role is optional — e.g. ?role=faculty to see only
  * faculty accounts.
  */
-async function getAllUsers(schoolId, role) {
-  return cached(
-    `usr:${schoolId}:all:${role ?? ""}`,
+// BUG FIX (unbounded list): this is the broadest table in the app (every
+// student+faculty+admin in a school combined) and used to return every row
+// in one response. Now paginated the same way invoices/students already are.
+async function getAllUsers(schoolId, role, query = {}) {
+  const { page, limit, skip } = parsePagination(query);
+  const { rows, total } = await cached(
+    `usr:${schoolId}:all:${role ?? ""}:${page}:${limit}`,
     null,
-    () => userRepository.findAllBySchool(schoolId, role),
+    () => userRepository.findAllBySchool(schoolId, role, { skip, limit }),
     `usr:${schoolId}`
   );
+  return { users: rows, pagination: buildPaginationMeta(page, limit, total) };
 }
 
 /**

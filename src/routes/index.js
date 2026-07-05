@@ -64,6 +64,7 @@ const couponRoutes            = require("../modules/coupons/coupon.routes");
 const subscriptionRoutes      = require("../modules/subscription/subscription.routes");
 const invoiceRoutes           = require("../modules/invoices/invoice.routes");
 const paymentRoutes           = require("../modules/payments/payment.routes");
+const announcementRoutes      = require("../modules/announcements/announcement.routes");
 /*
 |--------------------------------------------------------------------------
 | Route Registration
@@ -149,6 +150,10 @@ router.use("/admin/subscription", subscriptionRoutes);
 // Admin dashboard: invoices + payments (Phase 8E) — admin-only, scoped to the admin's own school
 router.use("/admin/invoices", invoiceRoutes);
 router.use("/admin/payments", paymentRoutes);
+
+// Announcements — admin (school-wide), HOD (department-wide), faculty (their
+// current students); every role including student can view their own list.
+router.use("/announcements", announcementRoutes);
 
 
 

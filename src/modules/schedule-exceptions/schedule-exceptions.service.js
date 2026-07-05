@@ -33,6 +33,7 @@ const {
   isStartBeforeOrSameDay,
 } = require("../../utils/date");
 const NOTIFICATION_TYPES = require("../../constants/notificationTypes");
+const { parsePagination, buildPaginationMeta } = require("../../utils/pagination");
 
 // The only two valid exception types.
 const VALID_TYPES = ["HOLIDAY", "HALF_DAY"];
@@ -256,6 +257,10 @@ async function listExceptions(ctx, query) {
     schoolId,
     sessionId: query.sessionId ? parseInt(query.sessionId) : undefined,
     includeRevoked: query.includeRevoked === "true",
+    // HOD: school-wide (departmentId null) + their own dept only, pushed
+    // into the WHERE clause (not a post-fetch JS filter — see repository's
+    // own comment on why that used to be wrong once pagination applies).
+    departmentScope: role === "hod" ? hodDepartmentId : undefined,
   };
 
   // Optional date window (both bounds required to apply it).
@@ -267,26 +272,34 @@ async function listExceptions(ctx, query) {
     filters.to = endOfDay(query.to);
   }
 
-  if (role === "admin") {
-    // Admin: no department filter → everything in the school.
-    return repo.findMany(filters);
-  }
-
-  // HOD: fetch the school's list, then keep school-wide + own-dept rows.
-  const all = await repo.findMany(filters);
-  return all.filter(
-    (e) => e.departmentId === null || e.departmentId === hodDepartmentId,
-  );
+  // BUG FIX (unbounded list): an admin calling this with no query params
+  // used to get every exception ever declared, school-wide, across every
+  // session/year, in one response. Now paginated.
+  const { page, limit, skip } = parsePagination(query);
+  const { rows, total } = await repo.findMany(filters, { skip, limit });
+  return { exceptions: rows, pagination: buildPaginationMeta(page, limit, total) };
 }
 
 /**
- * getExceptionById — fetch one exception (school-scoped).
+ * getExceptionById — fetch one exception.
+ *
+ * BUG FIX: this used to only check schoolId, so any HOD in the school could
+ * view another department's exception detail just by guessing/incrementing
+ * the :id. Now mirrors listExceptions' own viewing rule: an HOD may view a
+ * school-wide exception (departmentId === null) or their own department's,
+ * but not another department's.
  */
-async function getExceptionById(id, schoolId) {
+async function getExceptionById(id, ctx) {
+  const { schoolId, role, hodDepartmentId } = ctx;
   const exception = await repo.findById(parseInt(id), schoolId);
   if (!exception) {
     throw new AppError(404, "Schedule exception not found.");
   }
+
+  if (role === "hod" && exception.departmentId !== null && exception.departmentId !== hodDepartmentId) {
+    throw new AppError(403, "You can only view exceptions for your own department.");
+  }
+
   return exception;
 }
 

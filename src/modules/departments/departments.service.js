@@ -72,6 +72,7 @@ async function reconcileHodRole(userId, schoolId) {
       schoolId,
       "hod"
     );
+    await invalidateUserRoleCache(userId, schoolId);
   } else if (
     !headsAtLeastOne &&
     user.role === "hod"
@@ -82,7 +83,20 @@ async function reconcileHodRole(userId, schoolId) {
       schoolId,
       "faculty"
     );
+    await invalidateUserRoleCache(userId, schoolId);
   }
+}
+
+// BUG FIX: this role change used to never invalidate users.service.js's
+// cache tags (`usr:${schoolId}` covers getAllUsers/getUserById,
+// `usr:profile:${userId}` covers getOwnProfile) — the two modules write and
+// read the same User row but weren't wired together, so after an HOD
+// reassignment the admin's user list, that user's admin-facing detail view,
+// and the user's own profile could all keep showing the stale role until
+// the cache TTL expired.
+async function invalidateUserRoleCache(userId, schoolId) {
+  await invalidate(`usr:${schoolId}`);
+  await invalidate(`usr:profile:${userId}`);
 }
 
 /**
@@ -502,6 +516,7 @@ async function reconcileAllHodRoles(schoolId) {
         schoolId,
         "faculty"
       );
+      await invalidateUserRoleCache(user.id, schoolId);
 
       demoted.push({
         userId: user.id,

@@ -58,25 +58,37 @@ const prisma = require("../../config/db");
  * ordered by department so the frontend can group them
  * easily.
  */
-async function findAllBySchool(schoolId, departmentId) {
-  return prisma.faculty.findMany({
-    where: {
-      schoolId,
-      deletedAt: null,
-      ...(departmentId && { departmentId }),
-    },
+// skip/limit are optional — several callers (HOD's own-department faculty
+// picker, the invite-page dropdown, a dashboard stat) rely on getting the
+// FULL list back and are naturally bounded already (one department's
+// faculty count). Only the admin's whole-school Faculties list page passes
+// these, since that's the one that can genuinely grow into the hundreds.
+async function findAllBySchool(schoolId, departmentId, { skip, limit } = {}) {
+  const where = {
+    schoolId,
+    deletedAt: null,
+    ...(departmentId && { departmentId }),
+  };
 
-    include: {
-      user: true,
-      department: true,
-    },
+  if (skip === undefined) {
+    return prisma.faculty.findMany({
+      where,
+      include: { user: true, department: true },
+      orderBy: { department: { name: "asc" } },
+    });
+  }
 
-    orderBy: {
-      department: {
-        name: "asc",
-      },
-    },
-  });
+  const [rows, total] = await Promise.all([
+    prisma.faculty.findMany({
+      where,
+      include: { user: true, department: true },
+      orderBy: { department: { name: "asc" } },
+      skip,
+      take: limit,
+    }),
+    prisma.faculty.count({ where }),
+  ]);
+  return { rows, total };
 }
 
 /**

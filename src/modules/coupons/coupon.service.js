@@ -16,6 +16,7 @@
  */
 
 const couponRepository = require("./coupon.repository");
+const { parsePagination, buildPaginationMeta } = require("../../utils/pagination");
 
 /**
  * WHAT: Uppercases and trims a raw coupon code string.
@@ -187,8 +188,52 @@ async function createCoupon(input) {
  * WHY: Powers GET /api/admin/coupons.
  * RETURNS: Promise<Coupon[]>
  */
-async function listCoupons() {
-  return couponRepository.findAll();
+// BUG FIX (unbounded list): this used to return every coupon ever created
+// across the whole platform in one response — grows forever as promo
+// campaigns accumulate. No frontend page currently calls this (admin coupon
+// management was moved to the public landing page), so paginating it is
+// zero-risk; still worth fixing for whenever it's next used (curl/Postman,
+// or a future admin view).
+async function listCoupons(query = {}) {
+  const { page, limit, skip } = parsePagination(query);
+  const { rows, total } = await couponRepository.findAll({ skip, limit });
+  return { coupons: rows, pagination: buildPaginationMeta(page, limit, total) };
+}
+
+/**
+ * WHAT: Lists coupons a member of the public may actually use right now —
+ *       active, within their validFrom/validUntil window, AND not yet at
+ *       their usedCount/maxUses limit.
+ * WHY: Powers the PUBLIC GET /api/registration/coupons — shown on the
+ *      landing page before anyone has an account or a tempId. Unlike
+ *      GET /api/admin/coupons (listCoupons, above), this is unauthenticated,
+ *      so the shape returned here is deliberately trimmed down to only
+ *      what a visitor needs to decide whether to use a code and to see its
+ *      terms — no usedCount, no createdAt/updatedAt, nothing internal.
+ * RETURNS: Promise<Array<{ id, code, description, type, value, maxDiscount,
+ *   maxUses, validFrom, validUntil }>>
+ */
+async function listActiveCoupons() {
+  const now = new Date();
+  const coupons = await couponRepository.findActive(now);
+
+  // findActive() already filters on isActive + the date window; the
+  // maxUses/usedCount check can't be expressed as a Prisma column-to-column
+  // comparison, so it's applied here instead — cheap, since this table is
+  // always small.
+  return coupons
+    .filter((c) => c.maxUses == null || c.usedCount < c.maxUses)
+    .map((c) => ({
+      id: c.id,
+      code: c.code,
+      description: c.description,
+      type: c.type,
+      value: c.value,
+      maxDiscount: c.maxDiscount,
+      maxUses: c.maxUses,
+      validFrom: c.validFrom,
+      validUntil: c.validUntil,
+    }));
 }
 
 /**
@@ -259,6 +304,7 @@ module.exports = {
   validateAndApplyCoupon,
   createCoupon,
   listCoupons,
+  listActiveCoupons,
   updateCoupon,
   deleteCoupon,
 };

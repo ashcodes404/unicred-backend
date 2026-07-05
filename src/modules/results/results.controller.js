@@ -36,7 +36,7 @@ const listPublications = asyncHandler(async (req, res) => {
  * HOD/Faculty views one publication with submission status.
  */
 const getPublication = asyncHandler(async (req, res) => {
-  const data = await service.getPublication(Number(req.params.id), req.user.schoolId);
+  const data = await service.getPublication(Number(req.params.id), req.user.schoolId, req.faculty.departmentId);
   success(res, 200, "Publication fetched", data);
 });
 
@@ -48,7 +48,7 @@ const getPublication = asyncHandler(async (req, res) => {
 const transitionStatus = asyncHandler(async (req, res) => {
   const { status } = req.body;
   if (!status) return res.status(400).json({ success: false, message: "status required" });
-  const data = await service.transitionStatus(Number(req.params.id), req.user.schoolId, status, req.user.userId);
+  const data = await service.transitionStatus(Number(req.params.id), req.user.schoolId, status, req.user.userId, req.faculty.departmentId);
   success(res, 200, `Status updated to "${status}"`, data);
 });
 
@@ -59,7 +59,7 @@ const transitionStatus = asyncHandler(async (req, res) => {
  * Full result table for HOD review.
  */
 const getSummary = asyncHandler(async (req, res) => {
-  const data = await service.getResultSummary(Number(req.params.id), req.user.schoolId);
+  const data = await service.getResultSummary(Number(req.params.id), req.user.schoolId, req.faculty.departmentId);
   success(res, 200, "Summary fetched", data);
 });
 
@@ -68,7 +68,7 @@ const getSummary = asyncHandler(async (req, res) => {
  * Faculty who haven't submitted yet.
  */
 const getPending = asyncHandler(async (req, res) => {
-  const data = await service.getPendingSubmissions(Number(req.params.id), req.user.schoolId);
+  const data = await service.getPendingSubmissions(Number(req.params.id), req.user.schoolId, req.faculty.departmentId);
   success(res, 200, "Pending submissions fetched", data);
 });
 
@@ -77,7 +77,7 @@ const getPending = asyncHandler(async (req, res) => {
  * Students who failed at least one subject.
  */
 const getFailures = asyncHandler(async (req, res) => {
-  const data = await service.getFailedStudents(Number(req.params.id), req.user.schoolId);
+  const data = await service.getFailedStudents(Number(req.params.id), req.user.schoolId, req.faculty.departmentId);
   success(res, 200, "Failed students fetched", data);
 });
 

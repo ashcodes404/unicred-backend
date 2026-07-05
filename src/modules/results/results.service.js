@@ -37,18 +37,39 @@ async function getPublications(schoolId, departmentId) {
   });
 }
 
-async function getPublication(id, schoolId) {
+/**
+ * WHAT: Confirms a publication actually belongs to the caller's own
+ *       department, not just their school.
+ * WHY: schoolId alone isn't enough — a school can have several departments,
+ *      each with its own HOD, and a publication belongs to exactly one of
+ *      them. Without this check, any hod/faculty in the school could view
+ *      or manage another department's publication just by guessing/
+ *      incrementing the :id. Throws 404 (not 403) so a mismatched
+ *      department can't even confirm the id exists, same convention as
+ *      every other cross-tenant check in this app.
+ * @param {object} pub - a row from repo.getPublicationById (has departmentId)
+ * @param {number} departmentId - the caller's own department (req.faculty.departmentId)
+ */
+function assertPublicationInDepartment(pub, departmentId) {
+  if (pub.departmentId !== departmentId) {
+    throw new AppError(404, "Publication not found");
+  }
+}
+
+async function getPublication(id, schoolId, departmentId) {
   const pub = await repo.getPublicationById(id, schoolId);
   if (!pub) throw new AppError(404, "Publication not found");
+  assertPublicationInDepartment(pub, departmentId);
 
   const total = pub.facultyResultSubmissions.length;
   const submitted = pub.facultyResultSubmissions.filter((s) => s.isSubmitted).length;
   return { ...pub, submittedCount: submitted, totalSubjects: total, completionPercent: total ? Math.round((submitted / total) * 100) : 0 };
 }
 
-async function transitionStatus(publicationId, schoolId, newStatus, hodUserId) {
+async function transitionStatus(publicationId, schoolId, newStatus, hodUserId, departmentId) {
   const pub = await repo.getPublicationById(publicationId, schoolId);
   if (!pub) throw new AppError(404, "Publication not found");
+  assertPublicationInDepartment(pub, departmentId);
 
   const allowed = VALID_TRANSITIONS[pub.status] || [];
   if (!allowed.includes(newStatus)) {
@@ -101,8 +122,28 @@ async function submitMarks(facultyId, schoolId, publicationId, subjectId, marks,
   const subject = await prisma.subject.findFirst({ where: { id: subjectId, schoolId } });
   if (!subject) throw new AppError(404, "Subject not found");
 
-  const bad = marks.find((m) => m.marks < 0 || m.marks > subject.totalMarks);
-  if (bad) throw new AppError(400, `Marks must be between 0 and ${subject.totalMarks}. Invalid: ${bad.marks}`);
+  // BUG FIX: a non-finite value (undefined/null/NaN from a bad client
+  // payload) used to silently pass this check — `NaN < 0` and `NaN > x` are
+  // both false in JS — and only failed later as an unhandled Prisma type
+  // error (Float column) instead of a clean 400 here.
+  const bad = marks.find(
+    (m) => typeof m.marks !== "number" || !Number.isFinite(m.marks) || m.marks < 0 || m.marks > subject.totalMarks
+  );
+  if (bad) throw new AppError(400, `Marks must be a number between 0 and ${subject.totalMarks}. Invalid: ${bad.marks}`);
+
+  // BUG FIX: without this, a faculty could submit a mark for ANY
+  // Student.id in the whole database — Student.id is a globally unique
+  // autoincrement PK, not scoped per call — including a student belonging
+  // to a completely different school. Confirming every studentId is
+  // actually registered for THIS publication's session/batch/semester
+  // closes that cross-tenant write.
+  const registeredStudentIds = new Set(
+    await repo.getRegisteredStudentIds(schoolId, pub.sessionId, pub.batchYear, pub.semesterNumber)
+  );
+  const unregistered = marks.find((m) => !registeredStudentIds.has(m.studentId));
+  if (unregistered) {
+    throw new AppError(400, `Student ${unregistered.studentId} is not registered for this publication's session/batch/semester.`);
+  }
 
   // Get school's active grading system
   const gradingSystem = await gradingRepo.getActiveSystemForSchool(schoolId);
@@ -165,11 +206,22 @@ async function submitMarks(facultyId, schoolId, publicationId, subjectId, marks,
 
 // ─── Getters ──────────────────────────────────────────────────────────────────
 
-async function getPendingSubmissions(publicationId, schoolId) {
+async function getPendingSubmissions(publicationId, schoolId, departmentId) {
+  const pub = await repo.getPublicationById(publicationId, schoolId);
+  if (!pub) throw new AppError(404, "Publication not found");
+  assertPublicationInDepartment(pub, departmentId);
   return repo.getPendingSubmissions(publicationId, schoolId);
 }
 
-async function getFailedStudents(publicationId, schoolId) {
+async function getFailedStudents(publicationId, schoolId, departmentId) {
+  // BUG FIX: this used to call repo.getFailedMarks(publicationId) directly,
+  // completely ignoring schoolId/departmentId — any hod could read another
+  // school's failed students' names/emails just by guessing a publicationId.
+  // Fetching + verifying the publication first (same pattern getResultSummary
+  // and getRoster already used) closes that gap.
+  const pub = await repo.getPublicationById(publicationId, schoolId);
+  if (!pub) throw new AppError(404, "Publication not found");
+  assertPublicationInDepartment(pub, departmentId);
   return repo.getFailedMarks(publicationId);
 }
 
@@ -211,9 +263,10 @@ async function getRoster(facultyId, schoolId, publicationId, subjectId) {
   return repo.getRosterForSubject(schoolId, pub.sessionId, pub.batchYear, pub.semesterNumber, publicationId, subjectId);
 }
 
-async function getResultSummary(publicationId, schoolId) {
+async function getResultSummary(publicationId, schoolId, departmentId) {
   const pub = await repo.getPublicationById(publicationId, schoolId);
   if (!pub) throw new AppError(404, "Publication not found");
+  assertPublicationInDepartment(pub, departmentId);
   return repo.getResultSummary(publicationId);
 }
 

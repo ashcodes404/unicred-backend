@@ -32,6 +32,7 @@ const { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, LOGIN_URL
 const { enqueueGenerateInvoice } = require("../../queues/invoice.queue");
 const { calculateGst } = require("../../utils/gst"); // shared base→CGST/SGST/total split — see utils/gst.js
 const couponService = require("../coupons/coupon.service"); // PHASE 8B — shared coupon validation + discount math
+const { cached } = require("../../utils/cache");
 const couponRepository = require("../coupons/coupon.repository"); // PHASE 8B — raw coupon lookup at payment-completion time (see completeRegistrationForPayment)
 
 // How long a PendingRegistration stays valid before the tempId is considered dead.
@@ -64,8 +65,32 @@ function isExpired(pendingRegistration) {
  *      pricing cards before the user fills in school details.
  * RETURNS: Promise<SubscriptionPlan[]>
  */
+// Cached with a long TTL (1hr) and no invalidation path — subscription
+// plans are seeded/managed directly via Prisma Studio/migrations, never
+// through the app (confirmed: no subscriptionPlan.create/update/delete
+// call exists anywhere in src/), so there's no write path that could ever
+// make this stale. Powers the public, unauthenticated pricing page — read
+// on every visit by every prospective customer.
 async function listPlans() {
-  return registrationRepository.findActivePlans();
+  return cached(
+    "plans:active",
+    3600,
+    () => registrationRepository.findActivePlans(),
+    "plans"
+  );
+}
+
+/**
+ * WHAT: Lists coupons currently usable by the public.
+ * WHY: Powers GET /api/registration/coupons — the landing page's "Offers &
+ *      Coupons" section, shown before the visitor has a tempId or account.
+ *      Pure passthrough to couponService (same cross-module reuse as
+ *      applyCoupon() below, which already depends on couponService for the
+ *      discount math) — no registration-specific logic needed here.
+ * RETURNS: Promise<Array<{id, code, description, type, value, maxDiscount, maxUses, validFrom, validUntil}>>
+ */
+async function listActiveCoupons() {
+  return couponService.listActiveCoupons();
 }
 
 /**
@@ -902,6 +927,7 @@ async function handleWebhookPaymentCaptured({ razorpayOrderId, razorpayPaymentId
 
 module.exports = {
   listPlans,
+  listActiveCoupons,
   submitSchoolDetails,
   submitAdminDetails,
   getRegistrationSummary,

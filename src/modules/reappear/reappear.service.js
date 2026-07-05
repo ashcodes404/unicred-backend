@@ -6,6 +6,7 @@ const { notify } = require("../../utils/notify");
 const { computeSGPA, computeCGPA } = require("../../utils/grading");
 const repo = require("./reappear.repository");
 const resultsRepo = require("../results/results.repository");
+const { parsePagination, buildPaginationMeta } = require("../../utils/pagination");
 
 // ─── Student ──────────────────────────────────────────────────────────────────
 
@@ -68,8 +69,17 @@ async function withdrawApplication(applicationId, studentId) {
 
 // ─── HOD ──────────────────────────────────────────────────────────────────────
 
-async function getDeptApplications(schoolId, departmentId, status) {
-  return repo.getDeptApplications(schoolId, departmentId, status);
+// query.page/query.limit are optional — hod/Dashboard.jsx's widget omits
+// them and keeps getting the full (small, usually "pending"-filtered) list
+// back unchanged; a future full applications list page can opt in.
+async function getDeptApplications(schoolId, departmentId, status, query = {}) {
+  const paginated = query.page !== undefined || query.limit !== undefined;
+  if (!paginated) {
+    return repo.getDeptApplications(schoolId, departmentId, status);
+  }
+  const { page, limit, skip } = parsePagination(query);
+  const { rows, total } = await repo.getDeptApplications(schoolId, departmentId, status, { skip, limit });
+  return { applications: rows, pagination: buildPaginationMeta(page, limit, total) };
 }
 
 /**

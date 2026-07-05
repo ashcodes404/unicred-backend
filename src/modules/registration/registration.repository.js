@@ -37,9 +37,21 @@ async function findActivePlans() {
  * WHAT: Fetches a single plan by its name (e.g. "1 Year").
  * WHY: When the frontend submits `selectedPlan` as a string, we need to look
  *      up its real price server-side — we never trust a price sent by the client.
+ *
+ * GUARD: Prisma requires `name` to be a real string — passing null/undefined
+ * throws a long, confusing type-validation error instead of a clean one.
+ * We check for that FIRST and throw one short, clear error instead. This is
+ * what caught the bug where an invoice job crashed on school 90001: its
+ * `school.plan` was null, so `findPlanByName(null)` blew up here with a
+ * messy Prisma dump — now it fails fast with a message that actually says
+ * what's wrong.
  * RETURNS: Promise<SubscriptionPlan|null>
  */
 async function findPlanByName(name) {
+  if (!name) {
+    throw new Error("findPlanByName: plan name is missing (received null/empty).");
+  }
+
   return prisma.subscriptionPlan.findFirst({
     where: { name, isActive: true },
   });

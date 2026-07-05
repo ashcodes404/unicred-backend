@@ -240,68 +240,60 @@ async function bulkRegisterStudents(schoolId, body) {
 
   // ─────────────────────────────────────────────────────────────
   // Registration Processing
+  //
+  // BUG FIX (performance): this used to `await` each createRegistration()
+  // call one at a time inside a `for` loop — up to 200 sequential DB
+  // round-trips (each its own INSERT + nested select) before the request
+  // could respond, risking several seconds of blocking and proxy/client
+  // timeouts under a full batch. The in-memory checks (not-found/already-
+  // registered/already-enrolled) need no DB call, so they still run
+  // synchronously first; only the actual inserts are now fired concurrently
+  // via Promise.allSettled (not Promise.all, so one student's failure can't
+  // abort everyone else's already-in-flight insert).
   // ─────────────────────────────────────────────────────────────
 
   const registered = [];
   const skipped = [];
   const notificationUserIds = [];
+  const toCreate = [];
 
   for (const sid of studentIdNumbers) {
-    try {
-      const student = studentMap.get(sid);
+    const student = studentMap.get(sid);
 
-      // Student not found
-      if (!student) {
-        skipped.push({
-          studentId: sid,
-          reason: "Student not found.",
-        });
-        continue;
-      }
+    if (!student) {
+      skipped.push({ studentId: sid, reason: "Student not found." });
+    } else if (existingSet.has(sid)) {
+      skipped.push({ studentId: sid, reason: "Already registered in this session." });
+    } else if (activeMap.has(sid)) {
+      skipped.push({ studentId: sid, reason: `Already enrolled in active session "${activeMap.get(sid)}".` });
+    } else {
+      toCreate.push(student);
+    }
+  }
 
-      // Already registered in this session
-      if (existingSet.has(sid)) {
-        skipped.push({
-          studentId: sid,
-          reason: "Already registered in this session.",
-        });
-        continue;
-      }
-
-      // Already enrolled elsewhere
-      if (activeMap.has(sid)) {
-        skipped.push({
-          studentId: sid,
-          reason: `Already enrolled in active session "${activeMap.get(sid)}".`,
-        });
-        continue;
-      }
-
-      // Create registration
-      const registration = await repo.createRegistration({
+  const results = await Promise.allSettled(
+    toCreate.map((student) =>
+      repo.createRegistration({
         schoolId,
-        studentId: sid,
+        studentId: student.id,
         sessionId: sesId,
         semesterNumber: sem,
         batchYear: batch,
         status: "active",
-      });
+      })
+    )
+  );
 
-      registered.push(registration);
-
-      // Queue notification
-      if (student.userId) {
-        notificationUserIds.push(student.userId);
-      }
-    } catch (error) {
-      console.error(`Registration failed for student ${sid}:`, error);
-
-      skipped.push({
-        studentId: sid,
-        reason: "Registration failed.",
-      });
+  results.forEach((result, i) => {
+    const student = toCreate[i];
+    if (result.status === "fulfilled") {
+      registered.push(result.value);
+      if (student.userId) notificationUserIds.push(student.userId);
+    } else {
+      console.error(`Registration failed for student ${student.id}:`, result.reason);
+      skipped.push({ studentId: student.id, reason: "Registration failed." });
     }
-  }
+  });
 
   // ─────────────────────────────────────────────────────────────
   // Bulk Notifications

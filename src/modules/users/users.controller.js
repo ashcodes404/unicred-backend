@@ -89,7 +89,8 @@ async function getAllUsers(req, res) {
 
     const users = await userService.getAllUsers(
       req.schoolId,
-      role
+      role,
+      req.query
     );
 
     return success(

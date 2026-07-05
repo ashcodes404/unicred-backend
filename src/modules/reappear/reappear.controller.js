@@ -37,7 +37,7 @@ const withdraw = asyncHandler(async (req, res) => {
  * GET /api/reappear/department?status=pending
  */
 const deptApplications = asyncHandler(async (req, res) => {
-  const data = await service.getDeptApplications(req.user.schoolId, req.faculty.departmentId, req.query.status);
+  const data = await service.getDeptApplications(req.user.schoolId, req.faculty.departmentId, req.query.status, req.query);
   success(res, 200, "Applications fetched", data);
 });
 

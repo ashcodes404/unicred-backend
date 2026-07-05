@@ -17,7 +17,39 @@ const { LOGIN_URL, GST_RATE, GST_SELLER_GSTIN } = require("../config/env");
 const { sendWelcomeInvoiceEmail } = require("../utils/email");
 const { generateInvoiceNumber, buildInvoicePdf } = require("../services/invoice.service");
 const { calculateGst } = require("../utils/gst"); // shared base→CGST/SGST/total split — see utils/gst.js
-const registrationRepository = require("../modules/registration/registration.repository"); // reused only for findPlanByName
+const registrationRepository = require("../modules/registration/registration.repository"); // reused for findPlanByName
+const subscriptionRepository = require("../modules/subscription/subscription.repository"); // reused for findPlanById (renewal payments)
+
+/**
+ * WHAT: Figures out which SubscriptionPlan an invoice is actually for.
+ * WHY: A REGISTRATION payment has no planId of its own — school.plan (set
+ *      once, at registration time) is the only source, so we look the plan
+ *      up by that name.
+ *
+ *      A RENEWAL payment always carries its OWN planId (stamped on when the
+ *      renewal order was created — see subscription.repository.js's
+ *      createRenewalPayment). We MUST use that instead of school.plan,
+ *      because:
+ *        - a QUEUED renewal deliberately leaves school.plan untouched (it's
+ *          still whatever the CURRENT plan is, not the one just purchased),
+ *        - and school.plan can even be null for a school that was never
+ *          fully activated.
+ *      Using school.plan for a renewal invoice would silently bill the
+ *      WRONG plan, or crash entirely — this is exactly what happened for
+ *      school 90001 / job 24: a renewal payment (planId=3, "2 Years") got
+ *      queued, so school.plan stayed null, and the old code tried
+ *      findPlanByName(null) and crashed.
+ *
+ * @param {object} payment - the local Payment row (has planId for renewals, null for registrations)
+ * @param {object} school
+ * RETURNS: Promise<SubscriptionPlan|null>
+ */
+async function resolvePlanForInvoice(payment, school) {
+  if (payment.planId) {
+    return subscriptionRepository.findPlanById(payment.planId);
+  }
+  return registrationRepository.findPlanByName(school.plan);
+}
 
 /**
  * WHAT: Finds an existing Invoice for this school's payment, or creates one
@@ -55,9 +87,10 @@ async function findOrCreateInvoice({
 
   // PHASE 8A — GST breakdown.
   // We want the ORIGINAL pre-tax plan price, not a reverse-divided guess —
-  // so we reuse the same SubscriptionPlan lookup registration.service.js's
-  // createOrder() used when this order was first created.
-  const plan = await registrationRepository.findPlanByName(school.plan);
+  // resolvePlanForInvoice() picks the right source (payment.planId for
+  // renewals, school.plan for registrations) — see its own comment above
+  // for why this can't just always use school.plan.
+  const plan = await resolvePlanForInvoice(payment, school);
 
   // Extremely unlikely fallback: only reachable if the plan was deactivated
   // in the few seconds between payment and invoicing. Derives the base
@@ -156,14 +189,25 @@ async function processGenerateInvoiceJob({
     discountedBaseAmount,
   });
 
+  // Resolve the plan this invoice is really for (payment.planId for
+  // renewals, school.plan for registrations — see resolvePlanForInvoice's
+  // comment above). Used for the PDF/email's "Plan" line so a QUEUED
+  // renewal's invoice shows the plan actually purchased, not whatever
+  // school.plan currently happens to be (untouched until the queue
+  // activates). Falls back to school's own fields if resolution comes up
+  // empty, so this never crashes here even in an edge case.
+  const invoicePlan = await resolvePlanForInvoice(payment, school);
+  const planNameForDisplay = invoicePlan?.name ?? school.plan;
+  const planDurationForDisplay = invoicePlan?.durationMonths ?? school.planDurationMonths;
+
   // 3. Generate the PDF — skip if a previous attempt already made one.
   if (!invoice.pdfPath) {
     const pdfPath = await buildInvoicePdf({
       invoiceNumber: invoice.invoiceNumber,
       schoolName: school.name,
       adminName: admin.name,
-      plan: school.plan,
-      durationMonths: school.planDurationMonths,
+      plan: planNameForDisplay,
+      durationMonths: planDurationForDisplay,
       startDate: school.subscriptionStartDate,
       expiryDate: school.subscriptionExpiryDate,
       amount: invoice.amount,
@@ -194,7 +238,7 @@ async function processGenerateInvoiceJob({
       email: admin.email,
       name: admin.name,
       schoolName: school.name,
-      plan: school.plan,
+      plan: planNameForDisplay,
       loginUrl: LOGIN_URL,
       attachmentPath: invoice.pdfPath,
     });

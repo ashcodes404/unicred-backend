@@ -12,23 +12,27 @@ model School {
   id                       Int                          @id @default(autoincrement())
   name                     String
   domain                   String                       @unique
-  code                     String?
-  address                  String?
-  city                     String?
-  state                    String?
-  country                  String?
-  pincode                  String?
-  plan                     String?
-  planDurationMonths       Int?
-  subscriptionStartDate    DateTime?
-  subscriptionExpiryDate   DateTime?
-  paymentStatus            SchoolPaymentStatus?         @default(PENDING)
-  subscriptionStatus       SchoolSubscriptionStatus?    @default(PENDING)
-  razorpayOrderId          String?
-  razorpayPaymentId        String?
   createdAt                DateTime                     @default(now())
   deletedAt                DateTime?
   updatedAt                DateTime                     @updatedAt
+  address                  String?
+  city                     String?
+  code                     String?
+  country                  String?
+  paymentStatus            SchoolPaymentStatus?         @default(PENDING)
+  pincode                  String?
+  plan                     String?
+  planDurationMonths       Int?
+  razorpayOrderId          String?
+  razorpayPaymentId        String?
+  state                    String?
+  subscriptionExpiryDate   DateTime?
+  subscriptionStartDate    DateTime?
+  subscriptionStatus       SchoolSubscriptionStatus?    @default(PENDING)
+  queuedPaymentId          Int?
+  queuedPlan               String?
+  queuedPlanDurationMonths Int?
+  queuedPlanStartsAt       DateTime?
   departments              Department[]
   users                    User[]
   faculty                  Faculty[]
@@ -51,40 +55,43 @@ model School {
   scheduleExceptions       ScheduleException[]
   facultyAbsences          FacultyAbsence[]
   absenceSubstitutions     AbsenceSubstitution[]
+  announcements            Announcement[]
 
   @@index([subscriptionExpiryDate])
   @@map("schools")
 }
 
 model User {
-  id                  Int               @id @default(autoincrement())
-  schoolId            Int
-  email               String            @unique
-  role                Role
-  name                String
-  bio                 String?
-  createdAt           DateTime          @default(now())
-  deletedAt           DateTime?
-  emailVerified       Boolean           @default(false)
-  githubUrl           String?
-  isActive            Boolean           @default(true)
-  lastLoginAt         DateTime?
-  linkedinUrl         String?
-  passwordHash        String
-  phoneNumber         String?
-  portfolioUrl        String?
-  profilePhotoUrl     String?
-  updatedAt           DateTime          @updatedAt
-  failedLoginAttempts Int               @default(0)
-  lockedUntil         DateTime?
-  school              School            @relation(fields: [schoolId], references: [id])
-  student             Student?
-  faculty             Faculty?
-  hodOfDepartments    Department[]      @relation("DepartmentHod")
-  refreshTokens       RefreshToken[]
-  otpVerifications    OtpVerification[]
-  auditLogs           AuditLog[]
-  notifications       Notification[]
+  id                    Int                     @id @default(autoincrement())
+  schoolId              Int
+  email                 String                  @unique
+  role                  Role
+  name                  String
+  bio                   String?
+  createdAt             DateTime                @default(now())
+  deletedAt             DateTime?
+  emailVerified         Boolean                 @default(false)
+  githubUrl             String?
+  isActive              Boolean                 @default(true)
+  lastLoginAt           DateTime?
+  linkedinUrl           String?
+  passwordHash          String
+  phoneNumber           String?
+  portfolioUrl          String?
+  profilePhotoUrl       String?
+  updatedAt             DateTime                @updatedAt
+  failedLoginAttempts   Int                     @default(0)
+  lockedUntil           DateTime?
+  school                School                  @relation(fields: [schoolId], references: [id])
+  student               Student?
+  faculty               Faculty?
+  hodOfDepartments      Department[]            @relation("DepartmentHod")
+  refreshTokens         RefreshToken[]
+  otpVerifications      OtpVerification[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]
+  sentAnnouncements     Announcement[]          @relation("AnnouncementSender")
+  receivedAnnouncements AnnouncementRecipient[]
 
   @@index([schoolId])
   @@map("users")
@@ -164,7 +171,6 @@ model Faculty {
   user                     User                      @relation(fields: [userId], references: [id])
   achievements             Achievement[]             @relation("VerifiedBy")
   assignedReviews          AchievementReview[]       @relation("AssignedReviews")
-  announcements            Announcement[]
   facultyAssignments       FacultyAssignment[]
   facultyResultSubmissions FacultyResultSubmission[]
   reappearReviews          ReappearApplication[]     @relation("ReappearReviewedBy")
@@ -255,6 +261,7 @@ model AcademicSession {
   achievements         Achievement[]
   scheduleExceptions   ScheduleException[]
   facultyAbsences      FacultyAbsence[]
+  announcements        Announcement[]
 
   @@index([schoolId, departmentId])
   @@index([schoolId, status])
@@ -769,21 +776,82 @@ model Notification {
   @@map("notifications")
 }
 
-model Announcement {
-  id           Int        @id @default(autoincrement())
-  facultyId    Int
-  departmentId Int
-  title        String
-  content      String     @db.Text
-  createdAt    DateTime   @default(now())
-  expiresAt    DateTime?
-  updatedAt    DateTime   @updatedAt
-  faculty      Faculty    @relation(fields: [facultyId], references: [id])
-  department   Department @relation(fields: [departmentId], references: [id])
+// Who an Announcement targets. Mirrors the three sender roles that can
+// create one:
+//   school     — Admin sends to the whole school (all HODs + Faculty + Students)
+//   department — HOD sends to their own department (Faculty + Students)
+//   students   — Faculty sends only to students they currently teach
+//                (resolved from their active FacultyAssignment(s) for `sessionId`)
+// "faculty" and "students" are reused by more than one sender role — what
+// they mean is disambiguated by departmentId/sessionId, not the scope value
+// alone (see announcement.service.js's resolveAudience() for the full mapping):
+//   faculty,  departmentId=null -> admin's "All Faculty" (whole school)
+//   faculty,  departmentId=X    -> HOD's "Faculty (my dept)"
+//   students, departmentId=null -> admin's "All Students" (whole school)
+//   students, departmentId=X, sessionId=null -> HOD's "Students (my dept)"
+//   students, departmentId=X, sessionId=Y    -> faculty's "students I currently teach"
+enum AnnouncementScope {
+  school
+  department
+  hods
+  faculty
+  students
+}
 
+model Announcement {
+  id           Int               @id @default(autoincrement())
+  schoolId     Int
+  senderUserId Int
+  scope        AnnouncementScope
+
+  // Set for "department" and "students" scopes (both are always tied to one
+  // department); left null for "school" scope, which spans every department.
+  departmentId Int?
+
+  // Set only for "students" scope — records which academic session's
+  // FacultyAssignment(s) produced the recipient list, so the audience this
+  // announcement actually reached stays traceable even after the session ends.
+  sessionId Int?
+
+  title     String
+  content   String    @db.Text
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+  updatedAt DateTime  @updatedAt
+
+  school     School                  @relation(fields: [schoolId], references: [id])
+  sender     User                    @relation("AnnouncementSender", fields: [senderUserId], references: [id])
+  department Department?             @relation(fields: [departmentId], references: [id])
+  session    AcademicSession?        @relation(fields: [sessionId], references: [id])
+  recipients AnnouncementRecipient[]
+
+  @@index([schoolId])
   @@index([departmentId])
-  @@index([facultyId], map: "announcements_facultyId_fkey")
+  @@index([senderUserId])
+  @@index([sessionId])
   @@map("announcements")
+}
+
+// Snapshot of exactly which users an Announcement reached at the moment it
+// was created — one row per recipient. Same "snapshot junction table" idea
+// as AchievementReview's assigned-faculty rows: querying "announcements I
+// received" becomes a simple indexed lookup instead of re-deriving the
+// audience (department roster, or a faculty's then-current students) every
+// time the list is viewed, and the historical record stays accurate even if
+// a student later changes department or a faculty's assignment ends.
+model AnnouncementRecipient {
+  id             Int      @id @default(autoincrement())
+  announcementId Int
+  userId         Int
+  createdAt      DateTime @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([announcementId])
+  @@index([userId])
+  @@map("announcement_recipients")
 }
 
 model GradingSystem {
@@ -899,11 +967,6 @@ model PendingRegistration {
   expiresAt    DateTime
   createdAt    DateTime                  @default(now())
   updatedAt    DateTime                  @updatedAt
-  // ── PHASE 8B — COUPONS (nullable, so existing rows stay valid) ──
-  // Set by POST /api/registration/apply-coupon. createOrder() re-validates
-  // this coupon (it may have expired between apply and pay) and recomputes
-  // the discount fresh from the plan's true base price — this column is
-  // just "which coupon did the user ask to apply," never a trusted amount.
   couponCode   String?
 
   @@index([expiresAt])
@@ -925,35 +988,19 @@ model SubscriptionPlan {
 }
 
 model Payment {
-  id                Int           @id @default(autoincrement())
-  // PHASE 8C: tempId is now nullable — a RENEWAL payment has no
-  // PendingRegistration behind it, so it sets schoolId instead and leaves
-  // tempId null. Every existing/registration Payment keeps using tempId
-  // exactly as before; this only widens the column to allow the new case.
-  tempId            String?
-  razorpayOrderId   String        @unique
-  razorpayPaymentId String?
-  razorpaySignature String?
-  amount            Float
-  currency          String        @default("INR")
-  status            PaymentStatus @default(created)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  // ── PHASE 8C — SUBSCRIPTION RENEWAL (all nullable/defaulted, additive) ──
-  schoolId          Int?           // set for renewals; null for registration payments
-  purpose           PaymentPurpose @default(registration)
-  planId            Int?           // which SubscriptionPlan this payment was for (needed by
-  // the webhook path, which has no request body to read a planId from —
-  // see subscription.service.js's completeRenewalForPayment)
-  // ── PHASE 8E — nullable, so every Payment before this migration reads
-  // back as "unknown" rather than a wrong guess. Populated going forward at
-  // the moment a renewal completes (subscription.repository.js's
-  // completeRenewalTransaction already computes this exact date — it just
-  // never got persisted until now). This is what makes GET
-  // /api/admin/subscription/history able to show "expiry became X" per past
-  // renewal — School itself only ever holds the CURRENT expiry, overwritten
-  // on every renewal, so without this column that history is unrecoverable
-  // once a school has renewed more than once.
+  id                  Int            @id @default(autoincrement())
+  tempId              String?
+  razorpayOrderId     String         @unique
+  razorpayPaymentId   String?
+  razorpaySignature   String?
+  amount              Float
+  currency            String         @default("INR")
+  status              PaymentStatus  @default(created)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  planId              Int?
+  purpose             PaymentPurpose @default(registration)
+  schoolId            Int?
   resultingExpiryDate DateTime?
 
   @@index([tempId])
@@ -961,62 +1008,41 @@ model Payment {
   @@map("payments")
 }
 
-// ─────────────────────────────────────────────
-// SCHOOL REGISTRATION + PAYMENT — PHASE 4
-// One invoice per successful School registration payment. Created by the
-// background "generate-invoice" job (src/jobs/invoice.processor.js), never
-// inline during verify-payment — invoicing must never block or fail that request.
-// ─────────────────────────────────────────────
 model Invoice {
-  id                Int       @id @default(autoincrement())
-  schoolId          Int
-  invoiceNumber     String    @unique
-  amount            Float
-  gst               Float     @default(0)
-  totalAmount       Float
-  // ── PHASE 8A — GST breakdown (all nullable so existing rows stay valid) ──
-  baseAmount        Float? // pre-tax plan price
-  cgstAmount        Float? // half of the GST amount (intra-state Central GST)
-  sgstAmount        Float? // half of the GST amount (intra-state State GST)
-  gstRate           Float? // the % rate actually applied — kept per-invoice so a
-  // later GST_RATE env change doesn't silently reinterpret old invoices
-  sellerGstin       String? // our company's GSTIN, from env — null if not yet configured
-  // ── PHASE 8B — COUPONS (all nullable so pre-coupon invoices stay valid) ──
-  couponCode         String? // the coupon code actually applied, or null
-  discountAmount     Float?  // rupees knocked off the plan's base price
-  originalBaseAmount Float?  // the plan's true base price BEFORE the discount
-  // NOTE: `baseAmount` above keeps meaning "the base GST was computed on" —
-  // when a coupon applied, that's the DISCOUNTED base, not originalBaseAmount.
-  razorpayOrderId   String
-  razorpayPaymentId String
-  pdfPath           String?
-  emailedAt         DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                 Int       @id @default(autoincrement())
+  schoolId           Int
+  invoiceNumber      String    @unique
+  amount             Float
+  gst                Float     @default(0)
+  totalAmount        Float
+  razorpayOrderId    String
+  razorpayPaymentId  String
+  pdfPath            String?
+  emailedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  baseAmount         Float?
+  cgstAmount         Float?
+  gstRate            Float?
+  sellerGstin        String?
+  sgstAmount         Float?
+  couponCode         String?
+  discountAmount     Float?
+  originalBaseAmount Float?
 
   @@index([schoolId])
   @@map("invoices")
 }
 
-// ─────────────────────────────────────────────
-// COUPONS — PHASE 8B
-// A coupon discounts a plan's BASE price; GST is then computed on the
-// DISCOUNTED base (correct Indian GST treatment — tax applies to the actual
-// taxable value after discount, not the pre-discount price). See
-// src/modules/coupons/coupon.service.js for the math + validation rules.
-// ─────────────────────────────────────────────
 model Coupon {
   id          Int        @id @default(autoincrement())
-  // Always stored UPPERCASE. Every lookup uppercases the caller's input
-  // first (see coupon.service.js), so "save20" and "SAVE20" are the same
-  // coupon — codes are case-insensitive from the user's point of view.
   code        String     @unique
   description String?
   type        CouponType
-  value       Float // percentage: 0-100 meaning "% off"; fixed: flat rupee amount off
-  maxUses     Int? // total redemptions allowed across ALL schools; null = unlimited
+  value       Float
+  maxUses     Int?
   usedCount   Int        @default(0)
-  maxDiscount Float? // optional cap for percentage coupons, e.g. "20% off up to ₹2000"
+  maxDiscount Float?
   validFrom   DateTime?
   validUntil  DateTime?
   isActive    Boolean    @default(true)
@@ -1026,34 +1052,22 @@ model Coupon {
   @@map("coupons")
 }
 
-enum CouponType {
-  percentage
-  fixed
-}
-
-// ─────────────────────────────────────────────
-// SUBSCRIPTION EXPIRY REMINDERS — PHASE 8D
-// One row per reminder actually sent. The @@unique below is what guarantees
-// each of the 4 reminders (7/3/1 days before + once after expiry) fires
-// EXACTLY once per subscription cycle — see subscription-reminder.processor.js
-// for how the "insert first, then send" ordering uses this as a claim lock.
-// ─────────────────────────────────────────────
 model SubscriptionReminder {
-  id           Int          @id @default(autoincrement())
-  schoolId     Int
-  reminderType ReminderType
-  // The expiry THIS reminder was for — not just "when it was sent". Part of
-  // the unique key so that once a renewal pushes subscriptionExpiryDate to a
-  // NEW date, the old rows (tied to the OLD date) become irrelevant history
-  // and this school gets a completely fresh set of 4 reminders for the new
-  // cycle — nothing has to be deleted or reset for renewals to "just work".
+  id                     Int          @id @default(autoincrement())
+  schoolId               Int
+  reminderType           ReminderType
   subscriptionExpiryDate DateTime
-  sentAt       DateTime     @default(now())
-  createdAt    DateTime     @default(now())
+  sentAt                 DateTime     @default(now())
+  createdAt              DateTime     @default(now())
 
   @@unique([schoolId, reminderType, subscriptionExpiryDate])
   @@index([schoolId])
   @@map("subscription_reminders")
+}
+
+enum CouponType {
+  percentage
+  fixed
 }
 
 enum ReminderType {
@@ -1189,18 +1203,10 @@ enum PaymentStatus {
   failed
 }
 
-// PHASE 8C — what a Payment row is FOR. "registration" is the default so
-// every existing Payment row (all created before this column existed) reads
-// back as "registration" — exactly what they always were.
 enum PaymentPurpose {
   registration
   renewal
 }
-
-// ─────────────────────────────────────────────
-// SCHOOL REGISTRATION + PAYMENT — PHASE 3
-// Status of the real School row created after payment is verified.
-// ─────────────────────────────────────────────
 
 enum SchoolPaymentStatus {
   PENDING

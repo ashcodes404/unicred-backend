@@ -28,6 +28,7 @@ const verifyToken   = require("../../middleware/auth.middleware");
 const requireRole   = require("../../middleware/role.middleware");
 const attachTenant  = require("../../middleware/tenant.middleware");
 const { facultyContext } = require("../../middleware/facultyContext.middleware");
+const { timetableDocumentRateLimiter } = require("../../middleware/rateLimit.middleware");
 
 // Every route below first requires a valid login and a school context.
 router.use(verifyToken, attachTenant);
@@ -41,9 +42,13 @@ router.use(verifyToken, attachTenant);
 //   POST   /documents            HOD adds a new document (faculty|student)
 //   PATCH  /documents/:id        HOD edits a document (replace file / retitle)
 //   DELETE /documents/:id        HOD deletes a document
+// timetableDocumentRateLimiter on create/update — both fan out a
+// TIMETABLE_UPLOADED notification to every faculty or every student in the
+// department (see timetables.service.js's notifyAudience), the same larger
+// blast radius announcements/syllabus got a limiter for.
 router.get("/documents", controller.listTimetableDocuments);
-router.post("/documents", requireRole("hod"), facultyContext, controller.addTimetableDocument);
-router.patch("/documents/:id", requireRole("hod"), facultyContext, controller.updateTimetableDocument);
+router.post("/documents", requireRole("hod"), timetableDocumentRateLimiter, facultyContext, controller.addTimetableDocument);
+router.patch("/documents/:id", requireRole("hod"), timetableDocumentRateLimiter, facultyContext, controller.updateTimetableDocument);
 router.delete("/documents/:id", requireRole("hod"), facultyContext, controller.deleteTimetableDocument);
 
 router.get("/:id", controller.getTimetableById);

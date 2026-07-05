@@ -12,13 +12,18 @@ router.use(authenticate);
 // ─── HOD: Publication Management ─────────────────────────────────────────────
 router.post("/publications",                  requireRole("hod"), facultyContext, c.createPublication);
 router.get("/publications",                   requireRole("hod"), facultyContext, c.listPublications);
-router.get("/publications/:id",               requireRole("hod", "faculty"), c.getPublication);
-router.patch("/publications/:id/status",      requireRole("hod"), c.transitionStatus);
+// facultyContext attached to every one of these — without it, ANY hod/faculty
+// in the school (not just the one for this publication's OWN department)
+// could view another department's publication/summary/pending/failures just
+// by guessing/incrementing the :id. See results.service.js's
+// assertPublicationInDepartment() for the actual check.
+router.get("/publications/:id",               requireRole("hod", "faculty"), facultyContext, c.getPublication);
+router.patch("/publications/:id/status",      requireRole("hod"), facultyContext, c.transitionStatus);
 
 // HOD review
-router.get("/publications/:id/summary",       requireRole("hod"), c.getSummary);
-router.get("/publications/:id/pending",       requireRole("hod"), c.getPending);
-router.get("/publications/:id/failures",      requireRole("hod"), c.getFailures);
+router.get("/publications/:id/summary",       requireRole("hod"), facultyContext, c.getSummary);
+router.get("/publications/:id/pending",       requireRole("hod"), facultyContext, c.getPending);
+router.get("/publications/:id/failures",      requireRole("hod"), facultyContext, c.getFailures);
 
 // ─── Faculty: Mark Upload ─────────────────────────────────────────────────────
 router.get("/roster",                         requireRole("faculty", "hod"), facultyContext, c.getRoster);

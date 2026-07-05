@@ -107,6 +107,16 @@ async function getStatus(schoolId) {
     paymentStatus: school.paymentStatus,
     isExpired: expired,
     daysLeft: expired ? 0 : daysLeft,
+    // QUEUED PLAN — lets the dashboard show "Upcoming plan: X, starts on Y"
+    // and disable/relabel the renew button instead of letting a second
+    // purchase attempt hit createRenewOrder()'s rejection blindly.
+    queuedPlan: school.queuedPlan
+      ? {
+          plan: school.queuedPlan,
+          planDurationMonths: school.queuedPlanDurationMonths,
+          startsAt: school.queuedPlanStartsAt,
+        }
+      : null,
   };
 }
 
@@ -118,9 +128,10 @@ async function getStatus(schoolId) {
  *      calculateGst() exactly like registration's createOrder(), just
  *      without the coupon branch.
  *
- * IDEMPOTENCY: reuses an existing unpaid renewal order for this school
- * instead of creating a second one — same reasoning as registration's
- * createOrder() (e.g. the admin refreshed the renewal checkout page).
+ * IDEMPOTENCY: reuses an existing unpaid renewal order for this school AND
+ * this same plan instead of creating a second one — same reasoning as
+ * registration's createOrder() (e.g. the admin refreshed the renewal
+ * checkout page). Picking a DIFFERENT plan always creates a fresh order.
  *
  * @param {number} schoolId - from req.user.schoolId (JWT) — an admin can only renew THEIR OWN school
  * @param {number} planId - which SubscriptionPlan to renew with
@@ -142,8 +153,26 @@ async function createRenewOrder(schoolId, planId) {
     throw err;
   }
 
-  // ── Idempotent retry: reuse an existing unpaid renewal order ──
-  const existingPayment = await subscriptionRepository.findCreatedRenewalPaymentBySchoolId(schoolId);
+  // QUEUE LIMIT — only one queued plan allowed at a time. Checked
+  // regardless of whether the CURRENT plan is active or already expired:
+  // if the current plan just expired and the daily cron simply hasn't run
+  // yet, letting a new purchase activate immediately here would push
+  // subscriptionExpiryDate into the future — and the already-paid queued
+  // plan would then never match the cron's "expired AND has a queue"
+  // query again, stranding it forever. Blocking on queuedPlan alone avoids
+  // that entirely.
+  if (school.queuedPlan) {
+    const err = new Error("You already have an upcoming plan queued.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // ── Idempotent retry: reuse an existing unpaid order, but ONLY if it's
+  //    for this SAME plan. An unpaid order for a different plan is stale —
+  //    it must never be reused for a new plan choice (that was the bug:
+  //    always returning the first plan ever picked, regardless of what the
+  //    admin selects now).
+  const existingPayment = await subscriptionRepository.findCreatedRenewalPaymentBySchoolId(schoolId, planId);
   if (existingPayment) {
     const { rupeesToPaise } = registrationService();
     return {
@@ -192,20 +221,29 @@ async function createRenewOrder(schoolId, planId) {
 
 /**
  * WHAT: Given a Payment row for a renewal (purpose="renewal") that is NOT
- *       yet marked paid, completes the renewal: computes the new expiry,
- *       extends the school, creates a GST invoice, and enqueues the
- *       invoice-email job. Shared by BOTH ways a renewal payment can be
- *       confirmed — renew-verify (browser) and the payment.captured webhook
- *       — exactly like registration's completeRegistrationForPayment() is
- *       shared by verify-payment and its webhook.
+ *       yet marked paid, completes the renewal — EITHER activating it
+ *       immediately (no active plan right now) OR queuing it (a plan is
+ *       still active) — then creates a GST invoice and enqueues the
+ *       invoice-email job either way. Shared by BOTH ways a renewal
+ *       payment can be confirmed — renew-verify (browser) and the
+ *       payment.captured webhook — exactly like registration's
+ *       completeRegistrationForPayment() is shared by verify-payment and
+ *       its webhook.
  * WHY: One function, one set of rules, so a renewal can never be completed
  *      differently (or twice) depending on which path got there first.
  *
- * IDEMPOTENCY: subscription.repository.js's completeRenewalTransaction()
- * does the actual "flip to paid" via a conditional updateMany (only matches
- * rows NOT already "paid"), inside the same transaction that extends the
- * expiry — so whichever caller (verify or webhook) arrives first does the
- * real work, and the other sees alreadyProcessed=true and changes nothing.
+ * QUEUE vs. ACTIVATE: isSchoolExpired(school) is re-checked FRESH here,
+ * not trusted from whatever it was at renew-order time — e.g. if the
+ * current plan happened to expire in the gap between order-creation and
+ * verify, this correctly activates immediately instead of queuing,
+ * matching "if NO active plan: behave like before."
+ *
+ * IDEMPOTENCY: both subscription.repository.js's completeRenewalTransaction()
+ * and completeQueueTransaction() do the actual "flip to paid" via a
+ * conditional updateMany (only matches rows NOT already "paid"), inside the
+ * same transaction that writes the result — so whichever caller (verify or
+ * webhook) arrives first does the real work, and the other sees
+ * alreadyProcessed=true and changes nothing.
  *
  * @param {object} payment - the local Payment row (purpose="renewal")
  * RETURNS: Promise<{ alreadyProcessed: boolean, schoolId: number }>
@@ -232,17 +270,40 @@ async function completeRenewalForPayment(payment) {
     throw err;
   }
 
-  const newExpiryDate = computeNewExpiry(school, plan.durationMonths);
+  let updatedSchool;
+  let alreadyProcessed;
 
-  const { school: updatedSchool, alreadyProcessed } = await subscriptionRepository.completeRenewalTransaction({
-    paymentId: payment.id,
-    razorpayOrderId: payment.razorpayOrderId,
-    razorpayPaymentId: payment.razorpayPaymentId,
-    schoolId: payment.schoolId,
-    planName: plan.name,
-    planDurationMonths: plan.durationMonths,
-    newExpiryDate,
-  });
+  if (isSchoolExpired(school)) {
+    // No active plan right now — ACTIVATE IMMEDIATELY (unchanged Phase 8C behavior).
+    const newExpiryDate = computeNewExpiry(school, plan.durationMonths);
+
+    ({ school: updatedSchool, alreadyProcessed } = await subscriptionRepository.completeRenewalTransaction({
+      paymentId: payment.id,
+      razorpayOrderId: payment.razorpayOrderId,
+      razorpayPaymentId: payment.razorpayPaymentId,
+      schoolId: payment.schoolId,
+      planName: plan.name,
+      planDurationMonths: plan.durationMonths,
+      newExpiryDate,
+    }));
+  } else {
+    // A plan is still active — QUEUE this purchase instead of touching it.
+    // The queued plan starts exactly when the current one ends, so its
+    // "start" is simply the current subscriptionExpiryDate.
+    const { addMonths } = registrationService();
+    const queueStartsAt = school.subscriptionExpiryDate;
+    const queueExpiryDate = addMonths(queueStartsAt, plan.durationMonths);
+
+    ({ school: updatedSchool, alreadyProcessed } = await subscriptionRepository.completeQueueTransaction({
+      paymentId: payment.id,
+      razorpayPaymentId: payment.razorpayPaymentId,
+      schoolId: payment.schoolId,
+      planName: plan.name,
+      planDurationMonths: plan.durationMonths,
+      queueStartsAt,
+      queueExpiryDate,
+    }));
+  }
 
   if (alreadyProcessed) {
     return { alreadyProcessed: true, schoolId: payment.schoolId };
@@ -250,10 +311,22 @@ async function completeRenewalForPayment(payment) {
 
   // Invoice + email — background job, same reasoning as registration: never
   // block or risk the renewal itself on PDF/email generation. No coupon
-  // fields passed (renewals never discount), so the invoice job records
-  // this exactly like any other no-coupon invoice.
+  // fields passed (renewals never discount), so originalBaseAmount and
+  // discountedBaseAmount are simply both plan.price — the same "true base"
+  // number either way. Passing them explicitly here means the invoice job
+  // never has to guess the plan from school.plan (which stays untouched for
+  // a QUEUED renewal, or can even be null for a school that's never been
+  // fully activated — see invoice.processor.js's resolvePlanForInvoice for
+  // the bug this used to cause). Generated identically whether this payment
+  // activated immediately or was queued — the invoice reflects the
+  // PAYMENT, not when the plan actually takes effect.
   try {
-    await enqueueGenerateInvoice({ schoolId: updatedSchool.id, paymentId: payment.id });
+    await enqueueGenerateInvoice({
+      schoolId: updatedSchool.id,
+      paymentId: payment.id,
+      originalBaseAmount: plan.price,
+      discountedBaseAmount: plan.price,
+    });
   } catch (enqueueErr) {
     console.error(
       `Failed to enqueue renewal invoice for school ${updatedSchool.id}:`,
@@ -318,9 +391,21 @@ async function renewVerify(schoolId, { razorpayOrderId, razorpayPaymentId, razor
   await completeRenewalForPayment({ ...payment, razorpayPaymentId });
 
   const updatedSchool = await subscriptionRepository.findSchoolById(schoolId);
+
+  // queued=true tells the frontend this purchase did NOT change the current
+  // plan — it just filled the queue (see getStatus()'s queuedPlan field for
+  // the same info on any later status check).
   return {
     alreadyProcessed: false,
     subscriptionExpiryDate: updatedSchool.subscriptionExpiryDate,
+    queued: !!updatedSchool.queuedPlan,
+    queuedPlan: updatedSchool.queuedPlan
+      ? {
+          plan: updatedSchool.queuedPlan,
+          planDurationMonths: updatedSchool.queuedPlanDurationMonths,
+          startsAt: updatedSchool.queuedPlanStartsAt,
+        }
+      : null,
   };
 }
 
@@ -374,10 +459,44 @@ async function getHistory(schoolId, query) {
   return { renewals, pagination: buildPaginationMeta(page, limit, total) };
 }
 
+/**
+ * WHAT: Activates every school's queued plan whose current plan has
+ *       already expired — called as an extra step inside the EXISTING
+ *       Phase 8D daily cron (src/jobs/subscription-reminder.processor.js),
+ *       not a new schedule.
+ * WHY: This is the "auto-activate the moment the current plan expires"
+ *      half of the queue feature — createRenewOrder()/completeRenewalForPayment()
+ *      only ever WRITE the queue; this is the only place that CONSUMES it.
+ *
+ * EXACTLY-ONCE: subscription.repository.js's activateQueuedPlanForSchool()
+ * does the real work via a conditional UPDATE (`where: queuedPlan: { not:
+ * null }`) — once a school's queue is cleared, it can never be activated
+ * again by a later run (this run finding it again) or an overlapping
+ * concurrent run (its own UPDATE would match 0 rows). No separate
+ * "processed" flag needed.
+ *
+ * RETURNS: Promise<number> - how many schools were activated (for the
+ *          cron's own per-run summary log)
+ */
+async function activateQueuedPlans() {
+  const { addMonths } = registrationService();
+  const candidates = await subscriptionRepository.findSchoolsWithExpiredQueuedPlan();
+
+  let activated = 0;
+  for (const school of candidates) {
+    const newExpiryDate = addMonths(school.queuedPlanStartsAt, school.queuedPlanDurationMonths);
+    const didActivate = await subscriptionRepository.activateQueuedPlanForSchool(school, newExpiryDate);
+    if (didActivate) activated++;
+  }
+
+  return activated;
+}
+
 module.exports = {
   getStatus,
   createRenewOrder,
   renewVerify,
   completeRenewalForPayment,
   getHistory,
+  activateQueuedPlans,
 };

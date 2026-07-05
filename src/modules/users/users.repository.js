@@ -77,20 +77,21 @@ async function findById(userId, schoolId) {
  * Optional role filter, e.g. findAllBySchool(5, "faculty")
  * to see only faculty accounts.
  */
-async function findAllBySchool(schoolId, role) {
-  return prisma.user.findMany({
-    where: {
-      schoolId,
-      deletedAt: null,
-      ...(role && { role }),
-    },
+// skip/limit are optional — departments.service.js's reconcileAllHodRoles
+// relies on getting the full array back (it self-heals every "hod" in the
+// school in one pass), so this only paginates when explicitly asked.
+async function findAllBySchool(schoolId, role, { skip, limit } = {}) {
+  const where = { schoolId, deletedAt: null, ...(role && { role }) };
 
-    select: SAFE_USER_FIELDS,
+  if (skip === undefined) {
+    return prisma.user.findMany({ where, select: SAFE_USER_FIELDS, orderBy: { name: "asc" } });
+  }
 
-    orderBy: {
-      name: "asc",
-    },
-  });
+  const [rows, total] = await Promise.all([
+    prisma.user.findMany({ where, select: SAFE_USER_FIELDS, orderBy: { name: "asc" }, skip, take: limit }),
+    prisma.user.count({ where }),
+  ]);
+  return { rows, total };
 }
 
 /**

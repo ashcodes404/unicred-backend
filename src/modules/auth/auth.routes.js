@@ -10,8 +10,10 @@
  *   POST /refresh    → rotates refresh token, returns new access token
  *   POST /logout     → revokes current device's refresh token
  *
- * ADMIN-ONLY:
- *   POST /invite     → admin creates a faculty/hod/admin account
+ * ADMIN or HOD:
+ *   POST /invite     → admin creates faculty/hod/admin; hod creates faculty
+ *                      only (see ALLOWED_INVITEE_ROLES_BY_INVITER_ROLE in
+ *                      auth.service.js's invite())
  *
  * AUTHENTICATED (any role):
  *   POST /logout-all → revokes all refresh tokens for this user
@@ -37,7 +39,8 @@ const {
 const {
   loginRateLimiter,
   refreshRateLimiter,
-  otpRateLimiter
+  otpRateLimiter,
+  registerRateLimiter,
 } = require("../../middleware/rateLimit.middleware");
 
 // Default exports — no destructuring
@@ -46,12 +49,16 @@ const requireRole = require("../../middleware/role.middleware");
 
 // ── PUBLIC ROUTES ─────────────────────────────────────────────────────────────
 
-router.post("/register", registerHandler);
+// registerRateLimiter/otpRateLimiter added here — /register, /verify-otp,
+// and /resend-otp all trigger an email send with no prior limiter, an open
+// email-bombing vector (same abuse category otpRateLimiter already blocks
+// on the password-reset routes below).
+router.post("/register", registerRateLimiter, registerHandler);
 router.post("/login", loginRateLimiter, loginHandler);
 router.post("/refresh", refreshRateLimiter, refreshHandler);
 router.post("/logout", logoutHandler);
-router.post("/verify-otp", verifyOtp);
-router.post("/resend-otp", resendOtp);
+router.post("/verify-otp", otpRateLimiter, verifyOtp);
+router.post("/resend-otp", otpRateLimiter, resendOtp);
 
 /**
  * ----------------------------------------------------
@@ -79,10 +86,13 @@ router.post("/reset-password", otpRateLimiter, resetPassword);
 
 router.post("/verify-reset-otp", otpRateLimiter, verifyResetOtp);
 
-// ── ADMIN-ONLY ────────────────────────────────────────────────────────────────
+// ── ADMIN or HOD ──────────────────────────────────────────────────────────────
 
-// schoolId comes from admin's JWT (req.user.schoolId) — never from body
-// Body: { email, name, role }  where role ∈ { "faculty", "hod", "admin" }
+// schoolId comes from the caller's JWT (req.user.schoolId) — never from body.
+// Body: { email, name, role }. Which `role` values are actually allowed
+// depends on the CALLER's own role — enforced in auth.service.js's invite(),
+// not here (an admin may invite faculty/hod/admin; an hod may only invite
+// faculty).
 router.post("/invite", authenticate, requireRole("admin" , "hod"), inviteHandler);
 
 // ── AUTHENTICATED (any role) ──────────────────────────────────────────────────

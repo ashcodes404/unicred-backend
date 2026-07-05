@@ -1,17 +1,29 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 
 const routes = require("./routes/index");
+const { FRONTEND_URL } = require("./config/env");
 const errorMiddleware = require("./middleware/error.middleware");
 const { webhookHandler } = require("./modules/registration/registration.controller");
 const subscriptionGate = require("./middleware/subscriptionGate.middleware"); // PHASE 8C — see that file for why this is global instead of per-route
 
 const app = express();
 
+// helmet() sets a standard set of security-related HTTP response headers
+// (X-Content-Type-Options, X-Frame-Options, a conservative default
+// Content-Security-Policy, etc.) — a baseline every production Express app
+// should have. Applied globally, before everything else, so every response
+// gets these headers regardless of which route handled it.
+app.use(helmet());
+
 app.use(
   cors({
-    origin: "http://localhost:3000", // Vite frontend
+    // FRONTEND_URL comes from config/env.js — defaults to the local Vite
+    // dev server, but MUST be set to the real deployed frontend's origin in
+    // production, or the browser will reject every request from it.
+    origin: FRONTEND_URL,
     credentials: true,
   })
 );

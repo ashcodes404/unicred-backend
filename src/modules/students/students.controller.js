@@ -28,16 +28,17 @@ const {
  */
 async function getAllStudents(req, res) {
   try {
-    const students =
+    const data =
       await studentService.getAllStudents(
-        req.schoolId
+        req.schoolId,
+        req.query
       );
 
     return success(
       res,
       200,
       "Students fetched successfully",
-      students
+      data
     );
   } catch (err) {
     return error(

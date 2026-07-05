@@ -48,20 +48,58 @@ async function deleteApplication(id) {
   return prisma.reappearApplication.delete({ where: { id } });
 }
 
-async function getDeptApplications(schoolId, departmentId, status) {
-  return prisma.reappearApplication.findMany({
-    where: {
-      schoolId,
-      ...(status ? { status } : {}),
-      student: { departmentId },
-    },
-    include: {
-      student: { include: { user: { select: { name: true, email: true } } } },
-      subject: { select: { name: true, courseCode: true } },
-      session: { select: { name: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+/**
+ * WHAT: Every reappear application in one department, optionally filtered
+ *       by status. Scoped by BOTH schoolId (this app's multi-tenancy rule —
+ *       see tenant.middleware.js) AND departmentId (via the student's own
+ *       department), so an HOD can only ever see their own department's
+ *       applications, never another department's or another school's.
+ * WHY: Powers GET /api/reappear/department. Wrapped in try/catch so a
+ *      failure logs the exact inputs and the real Prisma error message to
+ *      the server console BEFORE it reaches the generic global error
+ *      handler — that handler only logs the bare error object, which for a
+ *      Prisma "inconsistent query result" error (e.g. a reappear
+ *      application whose linked session/subject/student was deleted after
+ *      the fact — a real risk under this schema's relationMode="prisma",
+ *      which does NOT enforce foreign keys at the database level) doesn't
+ *      always make the actual cause obvious at a glance.
+ */
+// skip/limit are optional — hod/Dashboard.jsx's pending-applications widget
+// relies on getting the full (typically small, "pending only") list back,
+// so this only paginates when explicitly asked (e.g. a future full
+// department-applications list page, which can accumulate every semester).
+async function getDeptApplications(schoolId, departmentId, status, { skip, limit } = {}) {
+  const where = {
+    schoolId,
+    ...(status ? { status } : {}),
+    // deletedAt: null matches the same soft-delete convention every
+    // other department-scoped query in this app already follows (see
+    // syllabus.service.js's notifyDepartmentOfSyllabus, for example) —
+    // a student who was later deactivated shouldn't still show up here.
+    student: { departmentId, deletedAt: null },
+  };
+  const include = {
+    student: { include: { user: { select: { name: true, email: true } } } },
+    subject: { select: { name: true, courseCode: true } },
+    session: { select: { name: true } },
+  };
+
+  try {
+    if (skip === undefined) {
+      return await prisma.reappearApplication.findMany({ where, include, orderBy: { createdAt: "desc" } });
+    }
+    const [rows, total] = await Promise.all([
+      prisma.reappearApplication.findMany({ where, include, orderBy: { createdAt: "desc" }, skip, take: limit }),
+      prisma.reappearApplication.count({ where }),
+    ]);
+    return { rows, total };
+  } catch (err) {
+    console.error(
+      `[reappear] getDeptApplications failed — schoolId=${schoolId} departmentId=${departmentId} status=${status ?? "(all)"}:`,
+      err
+    );
+    throw err;
+  }
 }
 
 async function approveApplication(id, hodFacultyId, comment) {

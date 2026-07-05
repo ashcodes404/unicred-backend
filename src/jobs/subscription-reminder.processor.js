@@ -11,6 +11,9 @@
 const prisma = require("../config/db");
 const { LOGIN_URL } = require("../config/env");
 const { sendSubscriptionReminderEmail } = require("../utils/email");
+// QUEUED-PLAN AUTO-ACTIVATION — reuses this SAME daily job/schedule instead
+// of a new one (see subscription.service.js's activateQueuedPlans()).
+const subscriptionService = require("../modules/subscription/subscription.service");
 
 // How far back the EXPIRED bucket looks. NOT unbounded ("< now") — that
 // would re-scan every school that has EVER expired, forever, growing daily.
@@ -153,6 +156,12 @@ async function claimAndSend(school, reminderType, daysLeft) {
  * RETURNS: Promise<void> (logs a per-run summary)
  */
 async function processSubscriptionReminderJob() {
+  // Queued-plan activation runs FIRST, before the reminder buckets below —
+  // this way a school whose plan expired overnight gets its queued plan
+  // activated in the same run that would otherwise have emailed it an
+  // "EXPIRED" reminder, rather than always lagging one cron cycle behind.
+  const activated = await subscriptionService.activateQueuedPlans();
+
   const buckets = buildBuckets();
   let sent = 0;
   let skipped = 0;
@@ -172,7 +181,9 @@ async function processSubscriptionReminderJob() {
     }
   }
 
-  console.log(`[subscription-reminder] sent ${sent} reminder(s), skipped ${skipped} already-sent/unclaimable.`);
+  console.log(
+    `[subscription-reminder] activated ${activated} queued plan(s); sent ${sent} reminder(s), skipped ${skipped} already-sent/unclaimable.`,
+  );
 }
 
 module.exports = { processSubscriptionReminderJob };

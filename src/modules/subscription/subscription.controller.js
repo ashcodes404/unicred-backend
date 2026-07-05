@@ -40,7 +40,17 @@ async function renewOrderHandler(req, res, next) {
       return error(res, 400, "planId is required");
     }
 
-    const order = await subscriptionService.createRenewOrder(req.user.schoolId, Number(planId));
+    // Number(planId) turns the incoming value into a number (or NaN if it
+    // can't be — e.g. "abc"). Number.isInteger() then makes sure it's a
+    // whole number, and > 0 rules out 0/negative ids. Any planId that fails
+    // this is rejected here with a clear 400, instead of reaching the
+    // database with a bad value.
+    const parsedPlanId = Number(planId);
+    if (!Number.isInteger(parsedPlanId) || parsedPlanId <= 0) {
+      return error(res, 400, "planId must be a valid plan ID");
+    }
+
+    const order = await subscriptionService.createRenewOrder(req.user.schoolId, parsedPlanId);
     return success(res, 201, "Renewal payment order created successfully", order);
   } catch (err) {
     next(err);

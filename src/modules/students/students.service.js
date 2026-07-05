@@ -14,6 +14,7 @@ const departmentRepository = require(
 );
 
 const { cached, invalidate } = require("../../utils/cache");
+const { parsePagination, buildPaginationMeta } = require("../../utils/pagination");
 
 /**
  * STUDENT SERVICE
@@ -33,18 +34,26 @@ const { cached, invalidate } = require("../../utils/cache");
  */
 
 /**
- * Get all students belonging to the user's school.
+ * Get all students belonging to the user's school, paginated.
  *
  * Because repository filters by schoolId,
  * users can never see students from another school.
+ *
+ * BUG FIX (unbounded list): this used to return every student in the
+ * school in one response — a school with a few thousand students meant a
+ * few-thousand-row payload (with joined user+department) on every load of
+ * the admin students list. Now paginated the same way invoices/payments/
+ * announcements already are.
  */
-async function getAllStudents(schoolId) {
-  return cached(
-    `stu:${schoolId}:all`,
+async function getAllStudents(schoolId, query = {}) {
+  const { page, limit, skip } = parsePagination(query);
+  const { rows, total } = await cached(
+    `stu:${schoolId}:all:${page}:${limit}`,
     null,
-    () => studentRepository.findAllBySchool(schoolId),
+    () => studentRepository.findAllBySchool(schoolId, { skip, limit }),
     `stu:${schoolId}`
   );
+  return { students: rows, pagination: buildPaginationMeta(page, limit, total) };
 }
 
 /**
@@ -75,6 +84,34 @@ async function getStudentById(studentId, schoolId , currentUser) {
 
 
 
+// BUG FIX (mass assignment): createStudent/updateStudent used to spread the
+// raw request body straight into Prisma. schoolId is appended AFTER the
+// spread in createStudent so it can't be overridden there, but updateStudent
+// had no whitelist at all — a client could include schoolId in a PUT body
+// and move a student to a different tenant, or set isPlaced/deletedAt/userId
+// directly. Only these columns are legitimately editable via this generic
+// student create/update; isPlaced is owned by the placements module and
+// deletedAt has its own dedicated soft-delete path (studentRepository's
+// delete function), so neither belongs in this whitelist.
+const STUDENT_WRITABLE_FIELDS = [
+  "userId", // only meaningful on create — updateStudent below drops it too
+  "departmentId",
+  "rollNo",
+  "branch",
+  "batchYear",
+  "currentSemester",
+  "graduationYear",
+  "summary",
+];
+
+function pickWritableStudentFields(data) {
+  const picked = {};
+  for (const field of STUDENT_WRITABLE_FIELDS) {
+    if (data[field] !== undefined) picked[field] = data[field];
+  }
+  return picked;
+}
+
 /**
  * Create student.
  *
@@ -84,7 +121,7 @@ async function getStudentById(studentId, schoolId , currentUser) {
  */
 async function createStudent(studentData, schoolId) {
   const student = await studentRepository.createStudent({
-    ...studentData,
+    ...pickWritableStudentFields(studentData),
     schoolId,
   });
   await invalidate(`stu:${schoolId}`);
@@ -129,10 +166,14 @@ async function updateStudent(
   schoolId
   );
 
+  // userId is create-only — a student's User link should never be
+  // reassigned via a generic profile edit.
+  const { userId, ...editableFields } = pickWritableStudentFields(updateData);
+
   await studentRepository.updateStudent(
     studentId,
     schoolId,
-    updateData
+    editableFields
   );
 
   await invalidate(`stu:${schoolId}`);

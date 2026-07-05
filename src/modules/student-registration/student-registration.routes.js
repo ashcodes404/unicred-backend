@@ -18,6 +18,7 @@ const controller    = require("./student-registration.controller");
 const  verifyToken   = require("../../middleware/auth.middleware");
 const  requireRole   = require("../../middleware/role.middleware");
 const  attachTenant  = require("../../middleware/tenant.middleware");
+const { bulkOperationRateLimiter } = require("../../middleware/rateLimit.middleware");
 
 router.use(verifyToken, attachTenant);
 
@@ -28,9 +29,13 @@ router.post(
   controller.registerStudent
 );
 
+// bulkOperationRateLimiter added — a single call here can create up to 200
+// registrations and fire 200 notifications; the per-call cap alone doesn't
+// stop the same account from firing that repeatedly with no cooldown.
 router.post(
   "/register-session/bulk",
   requireRole("hod"),
+  bulkOperationRateLimiter,
   controller.bulkRegisterStudents
 );
 

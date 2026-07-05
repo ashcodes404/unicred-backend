@@ -35,8 +35,8 @@ async function createCouponHandler(req, res, next) {
  */
 async function listCouponsHandler(req, res, next) {
   try {
-    const coupons = await couponService.listCoupons();
-    return success(res, 200, "Coupons fetched successfully", { coupons });
+    const data = await couponService.listCoupons(req.query);
+    return success(res, 200, "Coupons fetched successfully", data);
   } catch (err) {
     next(err);
   }

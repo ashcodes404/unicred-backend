@@ -119,6 +119,11 @@ async function createSyllabusFile(schoolId, departmentId, body, uploadedById) {
     uploadedById,
   });
 
+  // BUG FIX: this write used to never invalidate the `syl:` tag listForUser()
+  // caches under — every faculty/HOD/student viewing this department's
+  // syllabus list kept seeing the pre-upload version until the TTL expired.
+  await invalidate(`syl:${schoolId}`);
+
   // Tell the whole department a new syllabus is available.
   await notifyDepartmentOfSyllabus(
     schoolId,
@@ -154,6 +159,11 @@ async function updateSyllabusFile(id, schoolId, departmentId, body, actorUserId)
     throw new AppError(400, "Nothing to update.");
   }
   const updated = await repo.updateById(Number(id), data);
+
+  // BUG FIX: same stale-cache gap as createSyllabusFile above — an edited
+  // file (new URL or retitled) kept showing the old version until the TTL
+  // expired, since only deleteSyllabusFile invalidated this tag.
+  await invalidate(`syl:${schoolId}`);
 
   // Notify the department that this subject's syllabus was edited.
   const subject = await prisma.subject.findFirst({

@@ -17,11 +17,19 @@ require("dotenv").config();
  * LOGIN_URL=<frontend login page, e.g. https://app.example.com/login — optional, defaults to "/login">
  * GST_RATE=<total GST %, e.g. 18 — optional, defaults to 18>
  * GST_SELLER_GSTIN=<our company's GSTIN — optional, leave blank until registered for GST>
+ * CLOUDINARY_CLOUD_NAME=<from Cloudinary dashboard>
+ * CLOUDINARY_API_KEY=<from Cloudinary dashboard>
+ * CLOUDINARY_API_SECRET=<from Cloudinary dashboard — never sent to frontend>
+ * FRONTEND_URL=<the deployed frontend's origin, e.g. https://app.example.com — optional, defaults to the local Vite dev server>
  */
 
 
 module.exports = {
   PORT: process.env.PORT || 5000,
+  // The ONLY origin allowed to call this API with credentials (see app.js's
+  // cors() setup). Must be set to the real deployed frontend URL in
+  // production — the localhost fallback only works for local development.
+  FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:3000",
   JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
   REFRESH_TOKEN_EXPIRES_DAYS: Number(process.env.REFRESH_TOKEN_EXPIRES_DAYS) || 7,
@@ -33,5 +41,8 @@ module.exports = {
   LOGIN_URL: process.env.LOGIN_URL || "/login",
   GST_RATE: Number(process.env.GST_RATE) || 18,
   GST_SELLER_GSTIN: process.env.GST_SELLER_GSTIN || null,
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
 };
 

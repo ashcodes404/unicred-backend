@@ -213,37 +213,6 @@ async function findDuplicate(schoolId, sessionId, facultyId, subjectId, batchYea
   });
 }
 
-/**
- * Check if a subject+batch has ANY faculty assigned in this session.
- *
- * Used when:
- *   - Creating ResultPublication: ensures every subject has a faculty assigned
- *   - Offering validation: warns HOD if offering has no faculty yet
- *
- * @param {number} sessionId      - Session ID
- * @param {number} subjectId      - Subject ID
- * @param {number} batchYear      - Batch year
- * @returns {Promise<Object|null>}
- */
-async function findAssignmentForSubject(sessionId, subjectId, batchYear) {
-  return prisma.facultyAssignment.findFirst({
-    where: {
-      sessionId,
-      subjectId,
-      batchYear,
-    },
-
-    select: {
-      id: true,
-      facultyId: true,
-      faculty: {
-        select: {
-          user: { select: { id: true, name: true } },
-        },
-      },
-    },
-  });
-}
 
 /**
  * Update an assignment (change faculty or semester details).
@@ -359,7 +328,6 @@ module.exports = {
   findByFaculty,
   findById,
   findDuplicate,
-  findAssignmentForSubject,
   updateAssignment,
   deleteAssignment,
   findForStudentSubject,

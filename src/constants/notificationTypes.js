@@ -33,6 +33,10 @@ const NOTIFICATION_TYPES = {
   ABSENCE_APPROVED: "ABSENCE_APPROVED",
   ABSENCE_REJECTED: "ABSENCE_REJECTED",
   SUBSTITUTE_ASSIGNED: "SUBSTITUTE_ASSIGNED",
+
+  // Sent to every user in an announcement's target audience — the whole
+  // school (admin), one department (HOD), or a faculty's current students.
+  ANNOUNCEMENT_POSTED: "ANNOUNCEMENT_POSTED",
 };
 
 module.exports = NOTIFICATION_TYPES;

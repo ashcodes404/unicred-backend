@@ -6,13 +6,6 @@ const prisma = require("../config/db");
  * Create notification for a single user
  */
 async function notify(userId, type, message, link = null) {
-  console.log("NOTIFY CALLED");
-   console.log({
-    userId,
-    type,
-    message,
-    link,
-  });
   return prisma.notification.create({
     data: {
       userId,

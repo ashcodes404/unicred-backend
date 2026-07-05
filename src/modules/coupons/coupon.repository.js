@@ -36,8 +36,36 @@ async function findById(id) {
  * WHY: Powers GET /api/admin/coupons — the admin dashboard's coupon table.
  * RETURNS: Promise<Coupon[]>
  */
-async function findAll() {
-  return prisma.coupon.findMany({ orderBy: { createdAt: "desc" } });
+async function findAll({ skip, limit } = {}) {
+  const [rows, total] = await Promise.all([
+    prisma.coupon.findMany({ orderBy: { createdAt: "desc" }, skip, take: limit }),
+    prisma.coupon.count(),
+  ]);
+  return { rows, total };
+}
+
+/**
+ * WHAT: Lists coupons that are active AND currently within their validity
+ *       window (validFrom/validUntil), newest first.
+ * WHY: Powers the PUBLIC GET /api/registration/coupons — the landing
+ *      page's "Offers & Coupons" section. Deliberately does NOT filter on
+ *      usedCount vs maxUses here: Prisma can't compare two columns to each
+ *      other in a `where` without raw SQL, so that check is cheap enough to
+ *      do in JS on the (small) result set — see coupon.service.js's
+ *      listActiveCoupons(), which is the only caller of this function.
+ * RETURNS: Promise<Coupon[]>
+ */
+async function findActive(now) {
+  return prisma.coupon.findMany({
+    where: {
+      isActive: true,
+      AND: [
+        { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+        { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 /**
@@ -118,6 +146,7 @@ module.exports = {
   findByCode,
   findById,
   findAll,
+  findActive,
   create,
   update,
   deactivate,

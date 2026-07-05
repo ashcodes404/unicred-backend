@@ -35,18 +35,22 @@ const prisma = require("../../config/db");
  *   where: { schoolId }
  * })
  */
-async function findAllBySchool(schoolId) {
-  return prisma.student.findMany({
-    where: {
-      schoolId,
-      deletedAt: null,
-    },
+async function findAllBySchool(schoolId, { skip, limit } = {}) {
+  const where = { schoolId, deletedAt: null };
 
-    include: {
-      user: true,
-      department: true,
-    },
-  });
+  // skip/limit are optional so any other internal caller that still wants
+  // the full list (none currently do, but keeps this function's old
+  // behavior available) isn't forced to paginate.
+  const [rows, total] = await Promise.all([
+    prisma.student.findMany({
+      where,
+      include: { user: true, department: true },
+      ...(skip !== undefined ? { skip, take: limit } : {}),
+    }),
+    prisma.student.count({ where }),
+  ]);
+
+  return { rows, total };
 }
 
 /**

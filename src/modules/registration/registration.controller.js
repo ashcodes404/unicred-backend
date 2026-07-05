@@ -38,6 +38,21 @@ async function getPlansHandler(req, res, next) {
 }
 
 /**
+ * WHAT: GET /api/registration/coupons
+ * WHY: Lets the frontend show currently-usable coupons on the public
+ *      landing page — no auth, no tempId needed, same as getPlansHandler.
+ * RETURNS: 200 + array of active, currently-valid Coupons (public shape).
+ */
+async function getActiveCouponsHandler(req, res, next) {
+  try {
+    const coupons = await registrationService.listActiveCoupons();
+    return success(res, 200, "Coupons fetched successfully", { coupons });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * WHAT: POST /api/registration/school-details
  * WHY: Step 1 of signup — validates the school's info + chosen plan, then
  *      creates a PendingRegistration row and hands back a tempId the
@@ -333,6 +348,7 @@ async function webhookHandler(req, res) {
 
 module.exports = {
   getPlansHandler,
+  getActiveCouponsHandler,
   submitSchoolDetailsHandler,
   submitAdminDetailsHandler,
   getReviewHandler,

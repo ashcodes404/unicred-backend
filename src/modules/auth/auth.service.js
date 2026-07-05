@@ -327,15 +327,20 @@ async function verifyOtp({ email, otp }) {
     },
   });
 
-  const otpMatches = await compareOtp(otp, otpRecord.otpCode);
-
-  if (!otpMatches) {
+  // BUG FIX: this check used to run AFTER `compareOtp(otp, otpRecord.otpCode)`,
+  // so if no unused EMAIL_VERIFICATION OTP existed for this user, `otpRecord`
+  // was null and reading `.otpCode` off it threw a TypeError — an unhandled
+  // crash surfaced as a generic 500, instead of the clean 400 this check was
+  // clearly meant to produce. Moved before the compareOtp() call that needs it.
+  if (!otpRecord) {
     const err = new Error("Invalid OTP");
     err.statusCode = 400;
     throw err;
   }
 
-  if (!otpRecord) {
+  const otpMatches = await compareOtp(otp, otpRecord.otpCode);
+
+  if (!otpMatches) {
     const err = new Error("Invalid OTP");
     err.statusCode = 400;
     throw err;
@@ -494,12 +499,27 @@ async function resendOtp({ email }) {
 // ALLOWED ROLES: "faculty", "hod", "admin"
 //   (students self-register via register() above — never via invite)
 // ─────────────────────────────────────────────
+// BUG FIX (privilege escalation): this used to check the INVITEE's role
+// against one fixed list regardless of who was inviting — since this route
+// is shared by both admin ("/admin/invite") and HOD ("/hod/invite") in the
+// frontend, that meant an HOD could pass role:"admin" (or "hod") in the
+// body and mint a brand-new admin account for themselves. The allowed
+// invitee roles now depend on the INVITER's own role: only an admin may
+// create another admin or an hod; an HOD may only invite faculty into
+// their department, exactly as the route's own docblock always claimed.
+const ALLOWED_INVITEE_ROLES_BY_INVITER_ROLE = {
+  admin: ["faculty", "hod", "admin"],
+  hod: ["faculty"],
+};
+
 async function invite({ email, name, role }, adminUser) {
-  // 1. Validate role — admins cannot invite students (students self-register)
-  const allowedRoles = ["faculty", "hod", "admin"];
+  // 1. Validate role — which roles are inviteable depends on the caller's
+  //    OWN role (see ALLOWED_INVITEE_ROLES_BY_INVITER_ROLE above). Falls
+  //    back to an empty list (deny everything) for any unexpected caller role.
+  const allowedRoles = ALLOWED_INVITEE_ROLES_BY_INVITER_ROLE[adminUser.role] || [];
   if (!allowedRoles.includes(role)) {
     const err = new Error(
-      `Invalid role "${role}". Invite is only for: ${allowedRoles.join(", ")}`,
+      `Invalid role "${role}". You may only invite: ${allowedRoles.join(", ") || "no roles"}.`,
     );
     err.statusCode = 400;
     throw err;
@@ -580,14 +600,17 @@ async function invite({ email, name, role }, adminUser) {
     },
   });
 
+  // tempPassword is deliberately NOT returned here — it's already delivered
+  // via the "account-created" email above (enqueueEmail), and the frontend
+  // never reads a tempPassword field from this response. Returning a live
+  // plaintext password in an API response body is a real secret-exposure
+  // risk (logs, browser devtools, proxies) for zero remaining benefit.
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     role: user.role,
     schoolId: user.schoolId,
-    // TODO: remove tempPassword from response once email sending is wired up
-    tempPassword,
   };
 }
 

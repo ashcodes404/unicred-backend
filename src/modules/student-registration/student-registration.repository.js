@@ -182,13 +182,18 @@ async function findAllBySession(schoolId, sessionId, filters = {}) {
  *   passed all → status = "completed"
  *   failed any → status = "detained"
  *
+ * schoolId is required (not currently called from anywhere, but every other
+ * write in this file takes it — dropping it here would let a future caller
+ * update a registration in ANY school just by its id).
+ *
  * @param {number} registrationId - Registration primary key
+ * @param {number} schoolId       - Tenant scope
  * @param {string} status         - New status
  * @returns {Promise<{count: number}>}
  */
-async function updateStatus(registrationId, status) {
+async function updateStatus(registrationId, schoolId, status) {
   return prisma.studentSessionRegistration.updateMany({
-    where: { id: registrationId },
+    where: { id: registrationId, schoolId },
     data:  { status },
   });
 }

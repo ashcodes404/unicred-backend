@@ -39,7 +39,8 @@ async function getAllFaculty(req, res) {
     const faculty =
       await facultyService.getAllFaculty(
         req.schoolId,
-        departmentId
+        departmentId,
+        req.query
       );
 
     return success(

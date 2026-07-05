@@ -7,6 +7,7 @@
 // filling this form does not have an account yet.
 //
 //   GET  /api/registration/plans              — list active subscription plans
+//   GET  /api/registration/coupons             — list currently-usable coupons (landing page, Phase 8F)
 //   POST /api/registration/school-details      — step 1: save school info, get tempId
 //   POST /api/registration/admin-details        — step 2: save admin info against tempId
 //   GET  /api/registration/review/:tempId      — step 3: combined summary before payment
@@ -33,6 +34,7 @@ const router = express.Router();
 
 const {
   getPlansHandler,
+  getActiveCouponsHandler,
   submitSchoolDetailsHandler,
   submitAdminDetailsHandler,
   getReviewHandler,
@@ -50,6 +52,7 @@ const {
 } = require("../../middleware/rateLimit.middleware");
 
 router.get("/plans", registrationReadRateLimiter, getPlansHandler);
+router.get("/coupons", registrationReadRateLimiter, getActiveCouponsHandler);
 router.post("/school-details", registrationFormRateLimiter, submitSchoolDetailsHandler);
 router.post("/admin-details", registrationFormRateLimiter, submitAdminDetailsHandler);
 router.get("/review/:tempId", registrationFormRateLimiter, getReviewHandler);

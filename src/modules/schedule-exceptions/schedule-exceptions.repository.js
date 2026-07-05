@@ -92,11 +92,20 @@ async function findById(id, schoolId) {
  * @param {Date} [filters.to]             window end (optional)
  * @returns {Promise<Array>}
  */
-async function findMany(filters) {
+// skip/limit are optional (no current frontend caller yet, so this stays
+// backward compatible for any internal use that wants the full list).
+async function findMany(filters, { skip, limit } = {}) {
   const {
     schoolId,
     sessionId,
     departmentId,
+    // BUG FIX (correctness + pagination): the HOD "school-wide + own dept
+    // only" restriction used to be applied by fetching EVERY row in the
+    // school and filtering in JS afterward — which silently broke as soon
+    // as pagination was added (a HOD's page 1 could come back nearly empty
+    // even with more matching rows on page 2, and the total count would be
+    // wrong). Pushing it into the WHERE clause via OR makes both correct.
+    departmentScope,
     includeRevoked = false,
     from,
     to,
@@ -111,6 +120,10 @@ async function findMany(filters) {
   // We only add the filter when the caller passed something meaningful.
   if (departmentId !== undefined) where.departmentId = departmentId;
 
+  if (departmentScope !== undefined) {
+    where.OR = [{ departmentId: null }, { departmentId: departmentScope }];
+  }
+
   // By default hide revoked rows; `revokedAt: null` means "not revoked".
   if (!includeRevoked) where.revokedAt = null;
 
@@ -120,11 +133,25 @@ async function findMany(filters) {
     where.endDate = { gte: from };   // gte = greater-than-or-equal
   }
 
-  return prisma.scheduleException.findMany({
-    where,
-    select: EXCEPTION_SELECT,
-    orderBy: { startDate: "asc" },
-  });
+  if (skip === undefined) {
+    return prisma.scheduleException.findMany({
+      where,
+      select: EXCEPTION_SELECT,
+      orderBy: { startDate: "asc" },
+    });
+  }
+
+  const [rows, total] = await Promise.all([
+    prisma.scheduleException.findMany({
+      where,
+      select: EXCEPTION_SELECT,
+      orderBy: { startDate: "asc" },
+      skip,
+      take: limit,
+    }),
+    prisma.scheduleException.count({ where }),
+  ]);
+  return { rows, total };
 }
 
 /**

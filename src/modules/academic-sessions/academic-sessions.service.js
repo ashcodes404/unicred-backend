@@ -382,6 +382,16 @@ async function updateSession(sessionId, schoolId, departmentId, body) {
  * @param {number} departmentId - Department isolation
  */
 async function promoteStudentsOnCompletion(sessionId, schoolId, departmentId) {
+  // BUG FIX: Step 3 below updates one row per active registration — up to
+  // 200 (bulkRegisterStudents' own per-call cap), all sequentially against
+  // this SAME transaction's one connection (Promise.all doesn't change
+  // that — MySQL still processes them one at a time on a single
+  // connection). Under Prisma's default 5s interactive-transaction
+  // timeout, a large department completing a session risked the whole
+  // transaction aborting with a hard P2028 timeout error instead of just
+  // being slow. A 200-row promotion realistically finishes in a few
+  // seconds; 20s gives comfortable headroom without masking a genuinely
+  // stuck query forever.
   await prisma.$transaction(async (tx) => {
     // Step 1 — Mark the session itself as "completed"
     await tx.academicSession.updateMany({
@@ -426,7 +436,7 @@ async function promoteStudentsOnCompletion(sessionId, schoolId, departmentId) {
       where: { id: { in: registrationIds } },
       data: { status: "completed" },
     });
-  });
+  }, { timeout: 20000 });
 }
 
 /**

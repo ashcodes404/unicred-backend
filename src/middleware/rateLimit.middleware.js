@@ -180,6 +180,87 @@ const registrationPaymentRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+/**
+ * FAN-OUT RATE LIMITER FACTORY
+ *
+ * A handful of routes in this app don't just create one row — they also
+ * fan out a Notification to potentially every HOD/Faculty/Student in a
+ * whole department or school (announcements, syllabus uploads, timetable
+ * documents, schedule exceptions). A compromised or buggy account hammering
+ * one of these doesn't just create junk rows, it floods a large number of
+ * OTHER users' Notification lists at once — a much bigger blast radius than
+ * a typical single-row create, which is why these get a limiter when most
+ * other internal CRUD routes in this app don't.
+ *
+ * 20/5min comfortably covers a real user trying several times in one
+ * sitting, while still being far below anything a genuine human would ever
+ * need by hand.
+ *
+ * @param {string} actionDescription - plain-English plural, e.g. "announcements posted"
+ */
+function createFanOutRateLimiter(actionDescription) {
+  return rateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 20,
+
+    message: {
+      success: false,
+      message: `Too many ${actionDescription}. Please wait a few minutes and try again.`,
+    },
+
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+}
+
+const announcementCreateRateLimiter = createFanOutRateLimiter("announcements posted");
+const syllabusRateLimiter = createFanOutRateLimiter("syllabus updates");
+const timetableDocumentRateLimiter = createFanOutRateLimiter("timetable updates");
+const scheduleExceptionRateLimiter = createFanOutRateLimiter("schedule exceptions declared");
+
+/**
+ * REGISTER RATE LIMITER
+ *
+ * Allows 10 account registrations per IP per 15 minutes. /register sends a
+ * verification email on every call — with no limiter at all, this was an
+ * open email-bombing vector (same category of abuse otpRateLimiter already
+ * blocks on the password-reset OTP routes below).
+ */
+const registerRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+
+  message: {
+    success: false,
+    message: "Too many registration attempts. Please try again later.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * BULK OPERATION RATE LIMITER
+ *
+ * Allows 10 requests per IP per 5 minutes. For routes that can create/notify
+ * up to a couple hundred rows in a single call (e.g. bulk student
+ * registration) — the per-call cap already bounds a single request, but
+ * nothing stopped an account from firing that request repeatedly with no
+ * cooldown. This closes that gap.
+ */
+const bulkOperationRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 10,
+
+  message: {
+    success: false,
+    message: "Too many bulk operations. Please wait a few minutes and try again.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   loginRateLimiter,
   refreshRateLimiter,
@@ -187,4 +268,10 @@ module.exports = {
   registrationReadRateLimiter,
   registrationFormRateLimiter,
   registrationPaymentRateLimiter,
+  announcementCreateRateLimiter,
+  registerRateLimiter,
+  syllabusRateLimiter,
+  timetableDocumentRateLimiter,
+  scheduleExceptionRateLimiter,
+  bulkOperationRateLimiter,
 };
