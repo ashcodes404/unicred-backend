@@ -21,6 +21,13 @@ require("dotenv").config();
  * CLOUDINARY_API_KEY=<from Cloudinary dashboard>
  * CLOUDINARY_API_SECRET=<from Cloudinary dashboard — never sent to frontend>
  * FRONTEND_URL=<the deployed frontend's origin, e.g. https://app.example.com — optional, defaults to the local Vite dev server>
+ * RESEND_API_KEY=<from resend.com dashboard → API Keys — used to send real emails in production>
+ * EMAIL_TEST_RECIPIENT=<TEMPORARY, for testing only — while Resend is in sandbox
+ *   mode (no verified domain yet), it only allows sending to the address your
+ *   Resend account is registered under. Set this to that address and every
+ *   outgoing email gets redirected to it, no matter who the real recipient
+ *   was. Remove this line once a domain is verified, to go back to sending
+ *   to real recipients.>
  */
 
 
@@ -44,5 +51,10 @@ module.exports = {
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
+  RESEND_API_KEY: process.env.RESEND_API_KEY,
+  EMAIL_FROM: process.env.EMAIL_FROM,
+  // TEMPORARY — see the comment above this file's env-var list. undefined
+  // (not set) means "off": emails go to their real recipient as normal.
+  EMAIL_TEST_RECIPIENT: process.env.EMAIL_TEST_RECIPIENT || null,
 };
 

@@ -11,6 +11,8 @@
  * 1. Email Verification OTP
  * 2. Password Reset OTP
  * 3. Account Creation Email
+ * 4. Welcome + Invoice Email
+ * 5. Subscription Reminder Email
  *
  * Why this file exists:
  * Instead of writing email logic inside controllers,
@@ -23,174 +25,122 @@
  * - Single source of truth for email logic
  *
  * Used by:
- * auth.service.js
+ * auth.service.js, src/jobs/invoice.processor.js,
+ * src/jobs/subscription-reminder.processor.js
  *
  * Flow:
- * Controller
+ * Controller / Background job
  *    ↓
  * Service
  *    ↓
  * email.js
  *    ↓
- * Gmail / SMTP
+ * Resend (email-sending API)
  */
 
 /**
- * Nodemailer is a Node.js package that allows
- * applications to send emails through SMTP servers.
+ * fs is Node's built-in file-system module — used here to read an invoice
+ * PDF off disk into memory before attaching it to an email (Resend wants
+ * the attachment's bytes, not a file path).
  */
-const nodemailer = require("nodemailer");
-
+const fs = require("fs");
 
 /**
- 
- * EMAIL TRANSPORTER
-
- *
- * What is a transporter?
- *
- * A transporter is an object created by Nodemailer that is
- * responsible for connecting to an email provider (Gmail,
- * Outlook, SendGrid, etc.) and sending emails.
- *
- * Think of it as a "mail delivery agent".
- *
- * Without a transporter:
- * ❌ We cannot send emails.
- *
- * With a transporter:
- * ✅ We can send OTPs
- * ✅ We can send password reset emails
- * ✅ We can send account creation emails
- *
- 
- * Why create it only in production?
- 
- *
- * During development:
- * - We don't want to send real emails.
- * - We simply print OTPs in the terminal.
- * - This avoids Gmail limits.
- * - This avoids unnecessary API calls.
- *
- * During production:
- * - Real users need real emails.
- * - Gmail SMTP is used to deliver emails.
- *
- * NODE_ENV values:
- *
- * development
- * production
- * test
- *
- * When NODE_ENV === "production",
- * transporter is created.
- *
- * Otherwise transporter is null.
- *
- * Example:
- *
- * Development:
- * transporter = null
- *
- * Production:
- * transporter = Gmail SMTP connection
- *
- * ------------------------------------------------------------------
- * createTransport()
- * ------------------------------------------------------------------
- *
- * Nodemailer built-in function:
- *
- * nodemailer.createTransport(config)
- *
- * Purpose:
- * Creates an SMTP connection configuration.
- *
- * Parameters:
- * service -> Email provider
- * auth    -> Login credentials
- *
- * Returned value:
- * Transporter Object
- *
- * Example:
- * transporter.sendMail(...)
- *
- * ------------------------------------------------------------------
- * Gmail Authentication
- * ------------------------------------------------------------------
- *
- * user:
- * Gmail account used to send emails.
- *
- * pass:
- * Gmail App Password
- * (NOT your Gmail login password)
- *
- * Example:
- *
- * GMAIL_USER=unicred.team@gmail.com
- * GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
- *
- * ------------------------------------------------------------------
- * Flow
- * ------------------------------------------------------------------
- *
- * Register User
- *      ↓
- * Generate OTP
- *      ↓
- * sendVerificationOtp()
- *      ↓
- * transporter.sendMail()
- *      ↓
- * Gmail SMTP Server
- *      ↓
- * User receives email
+ * "Resend" is the class the `resend` npm package exports — it's a small
+ * SDK that wraps Resend's email-sending REST API, so we don't have to
+ * hand-write HTTP calls + auth headers ourselves (same reasoning as using
+ * the Razorpay/Cloudinary SDKs elsewhere in this app instead of raw fetch()).
  */
+const { Resend } = require("resend");
+const { RESEND_API_KEY, EMAIL_FROM, EMAIL_TEST_RECIPIENT } = require("../config/env");
 
-const transporter =
-process.env.NODE_ENV === "production"
-? nodemailer.createTransport({
-service: "gmail",
-auth: {
-user: process.env.GMAIL_USER,
-pass: process.env.GMAIL_APP_PASSWORD,
-},
-})
-: null;
+/**
+ * EMAIL CLIENT
+ * ------------------------------------------------------------------
+ * Only created in production — during development we never want to spend
+ * real API calls (or accidentally email a real person) just from testing
+ * locally, so every function below just console.logs instead (see each
+ * function's own `if (NODE_ENV !== "production")` branch).
+ *
+ * `new Resend(apiKey)` just stores the API key in memory — it doesn't open
+ * a network connection, so creating one client here and reusing it for
+ * every email is both correct and cheap (same pattern as this app's shared
+ * Prisma/Razorpay/Cloudinary clients).
+ */
+const resend =
+  process.env.NODE_ENV === "production" ? new Resend(RESEND_API_KEY) : null;
 
-async function sendVerificationOtp(email, otp) {
-if (process.env.NODE_ENV !== "production") {
-console.log("[EMAIL VERIFICATION]");
-console.log("Email:", email);
-console.log("OTP:", otp);
-return;
+/**
+ * WHAT: Sends one email through Resend and throws a clear error if Resend
+ *       reports the send failed.
+ * WHY: Every function below needs this exact same "call Resend, then check
+ *      for an error" step — written once here instead of five times.
+ *      Resend's SDK does NOT throw on a failed send by itself; it resolves
+ *      with `{ data, error }`, where `error` is set instead of the promise
+ *      rejecting. If we didn't check `error` ourselves, a failed send would
+ *      look identical to a successful one to the rest of the app — e.g.
+ *      the invoice background job (src/jobs/invoice.processor.js) needs a
+ *      real thrown error so BullMQ knows to retry it.
+ *
+ * @param {object} payload - { from, to, subject, text, attachments? } — same
+ *        shape Resend's emails.send() expects.
+ * RETURNS: Promise<void>
+ */
+async function sendViaResend(payload) {
+  // TEMPORARY SANDBOX OVERRIDE — see EMAIL_TEST_RECIPIENT's comment in
+  // config/env.js. While Resend has no verified domain, it rejects sending
+  // to any address except the one your Resend account is registered under.
+  // If EMAIL_TEST_RECIPIENT is set, every email's real `to` gets swapped
+  // for it here — the ONE place all 5 email functions already funnel
+  // through, so nothing else in the app needs to change. Logged clearly so
+  // it's never a silent surprise which address an email actually went to.
+  if (EMAIL_TEST_RECIPIENT) {
+    console.log(`[email] sandbox override: redirecting "${payload.to}" -> "${EMAIL_TEST_RECIPIENT}"`);
+    payload = { ...payload, to: EMAIL_TEST_RECIPIENT };
+  }
+
+  const { data, error } = await resend.emails.send(payload);
+
+  if (error) {
+    // error.message comes straight from Resend (e.g. "invalid_from_address",
+    // "monthly_quota_exceeded") — surfacing it as-is gives a clear, specific
+    // reason instead of a generic "failed to send email".
+    throw new Error(`Resend email failed: ${error.message}`);
+  }
+
+  return data;
 }
 
-await transporter.sendMail({
-from: process.env.EMAIL_FROM,
-to: email,
-subject: "Verify Your Account",
-text: `Your verification OTP is ${otp}. It expires in 10 minutes.`,
-});
+async function sendVerificationOtp(email, otp) {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[EMAIL VERIFICATION]");
+    console.log("Email:", email);
+    console.log("OTP:", otp);
+    return;
+  }
+
+  await sendViaResend({
+    from: EMAIL_FROM,
+    to: email,
+    subject: "Verify Your Account",
+    text: `Your verification OTP is ${otp}. It expires in 10 minutes.`,
+  });
 }
 
 async function sendPasswordResetOtp(email, otp) {
-if (process.env.NODE_ENV !== "production") {
-console.log("[PASSWORD RESET]");
-console.log("Email:", email);
-console.log("OTP:", otp);
-return;
-}
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[PASSWORD RESET]");
+    console.log("Email:", email);
+    console.log("OTP:", otp);
+    return;
+  }
 
-await transporter.sendMail({
-from: process.env.EMAIL_FROM,
-to: email,
-subject: "Password Reset",
-text: `Your password reset OTP is ${otp}. It expires in 10 minutes.`,
-});
+  await sendViaResend({
+    from: EMAIL_FROM,
+    to: email,
+    subject: "Password Reset",
+    text: `Your password reset OTP is ${otp}. It expires in 10 minutes.`,
+  });
 }
 
 /**
@@ -241,8 +191,8 @@ console.log("Password:", password);
 return;
 }
 
-await transporter.sendMail({
-from: process.env.EMAIL_FROM,
+await sendViaResend({
+from: EMAIL_FROM,
 to: email,
 subject: "Your Account Has Been Created",
 text:
@@ -264,9 +214,7 @@ text:
  * Purpose:
  * Sent once to a school's admin right after their payment is verified
  * (Phase 3) and their invoice PDF has been generated (Phase 4). Unlike the
- * other functions in this file, this one needs an attachment — none of the
- * existing functions support that, so this is a new addition rather than a
- * reuse of an existing one.
+ * other functions in this file, this one needs an attachment.
  *
  * Called From:
  * src/jobs/invoice.processor.js (a BullMQ background job, NOT the HTTP
@@ -286,8 +234,7 @@ text:
  * function here) — no real email is sent, no ESP is wired up.
  *
  * Production:
- * transporter.sendMail() same as the others, but with an `attachments`
- * array — Nodemailer reads the file at `path` and attaches it to the email.
+ * Sends via Resend, with the PDF file's bytes attached.
  *
  * Returns:
  * Promise<void>
@@ -311,8 +258,8 @@ async function sendWelcomeInvoiceEmail({
     return;
   }
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+  await sendViaResend({
+    from: EMAIL_FROM,
     to: email,
     subject: "Welcome to UniCred",
     text:
@@ -321,9 +268,17 @@ async function sendWelcomeInvoiceEmail({
       `Plan: ${plan}\n` +
       `You can log in here: ${loginUrl}\n\n` +
       `Your invoice is attached to this email.`,
-    // `attachments` is a Nodemailer option — give it a local file path and
-    // it reads the file and attaches it to the outgoing email for you.
-    attachments: [{ path: attachmentPath }],
+    // Resend wants the attachment's actual bytes, not a file path — so we
+    // read the PDF into memory first. fs.readFileSync() (Node's built-in,
+    // synchronous file-read function) is fine here: this only ever runs
+    // inside the background invoice worker, never during an HTTP request,
+    // so blocking briefly on disk I/O costs nothing user-facing.
+    attachments: [
+      {
+        filename: `${schoolName}-invoice.pdf`,
+        content: fs.readFileSync(attachmentPath),
+      },
+    ],
   });
 }
 
@@ -362,7 +317,7 @@ async function sendWelcomeInvoiceEmail({
  * real email is sent, no ESP is wired up.
  *
  * Production:
- * transporter.sendMail() same as the others.
+ * Sends via Resend, same as the others.
  *
  * Returns:
  * Promise<void>
@@ -400,8 +355,8 @@ async function sendSubscriptionReminderEmail({
     return;
   }
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+  await sendViaResend({
+    from: EMAIL_FROM,
     to: email,
     subject,
     text:
