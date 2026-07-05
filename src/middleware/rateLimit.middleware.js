@@ -261,6 +261,31 @@ const bulkOperationRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+/**
+ * GRADING METHOD RATE LIMITER
+ *
+ * Allows 5 requests per IP per hour. Switching a school's grading method
+ * fans out a notification to literally every user in the school (same
+ * blast-radius concern as the fan-out limiters above), but unlike
+ * announcements/syllabus/timetables this is an extremely rare, high-
+ * consequence admin action (a school might change this once a semester,
+ * if ever) — a much tighter window than the general 20/5min fan-out
+ * default is appropriate here, since there's no legitimate workflow that
+ * needs to flip this setting repeatedly.
+ */
+const gradingMethodRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+
+  message: {
+    success: false,
+    message: "Too many grading method changes. Please wait before trying again.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   loginRateLimiter,
   refreshRateLimiter,
@@ -274,4 +299,5 @@ module.exports = {
   timetableDocumentRateLimiter,
   scheduleExceptionRateLimiter,
   bulkOperationRateLimiter,
+  gradingMethodRateLimiter,
 };

@@ -37,6 +37,11 @@ const NOTIFICATION_TYPES = {
   // Sent to every user in an announcement's target audience — the whole
   // school (admin), one department (HOD), or a faculty's current students.
   ANNOUNCEMENT_POSTED: "ANNOUNCEMENT_POSTED",
+
+  // Sent to literally every user in the school when the admin switches
+  // the school's grading method (absolute <-> relative). Only affects
+  // marks submitted from this point on, never already-computed results.
+  GRADING_METHOD_CHANGED: "GRADING_METHOD_CHANGED",
 };
 
 module.exports = NOTIFICATION_TYPES;

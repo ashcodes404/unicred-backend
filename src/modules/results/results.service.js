@@ -3,7 +3,7 @@
 const prisma = require("../../config/db");
 const AppError = require("../../utils/AppError");
 const { notify } = require("../../utils/notify");
-const { computeGrade } = require("../../utils/grading");
+const { computeGrade, computeRelativeGrades } = require("../../utils/grading");
 const gradingRepo = require("../grading/grading.repository");
 const repo = require("./results.repository");
 const { enqueueResultsPublish } = require("../../queues/results.queue");
@@ -149,11 +149,32 @@ async function submitMarks(facultyId, schoolId, publicationId, subjectId, marks,
   const gradingSystem = await gradingRepo.getActiveSystemForSchool(schoolId);
   if (!gradingSystem) throw new AppError(500, "No grading system found");
 
-  // Compute grade for each student
-  const marksWithGrades = marks.map((m) => {
-    const { grade, gradePoint } = computeGrade(m.marks, subject.totalMarks, subject.passingMarks, gradingSystem.rules);
-    return { studentId: m.studentId, marks: m.marks, grade, gradePoint, gradingSystemId: gradingSystem.id };
-  });
+  // Compute grade for each student. Which METHOD is used (absolute fixed
+  // bands vs. relative/curved) is read fresh from School.gradingMethod on
+  // every call — so a school that switches methods only affects marks
+  // submitted from that point on, never anything already stored.
+  //
+  // Reappear marks ALWAYS use absolute grading, regardless of the
+  // school's general setting: a reappear cohort is only the small group
+  // of students who already failed and got approved to retake — curving
+  // grades against just that group would be statistically meaningless
+  // (and unfair, since it could manufacture new "failures" within an
+  // already-struggling group). Relative grading only makes sense against
+  // a subject's normal, full attempt.
+  const schoolGradingMethod = isReappear ? "absolute" : await gradingRepo.getGradingMethod(schoolId);
+
+  const gradedMarks =
+    schoolGradingMethod === "relative"
+      ? computeRelativeGrades(marks, subject.totalMarks, subject.passingMarks, gradingSystem.rules)
+      : marks.map((m) => ({ ...m, ...computeGrade(m.marks, subject.totalMarks, subject.passingMarks, gradingSystem.rules) }));
+
+  const marksWithGrades = gradedMarks.map((m) => ({
+    studentId: m.studentId,
+    marks: m.marks,
+    grade: m.grade,
+    gradePoint: m.gradePoint,
+    gradingSystemId: gradingSystem.id,
+  }));
 
   const semester = await repo.getSemesterByNumber(schoolId, pub.semesterNumber);
   if (!semester) throw new AppError(500, "Semester record not found");

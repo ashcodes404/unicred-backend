@@ -117,4 +117,54 @@ async function activate(id, schoolId) {
   });
 }
 
-module.exports = { getActiveSystemForSchool, listBySchool, findById, create, update, activate };
+/**
+ * Reads the school's current grading method ("absolute" or "relative").
+ * Returns null if the school itself doesn't exist (shouldn't normally
+ * happen — schoolId always comes from a verified JWT — but the caller
+ * checks for null rather than assuming).
+ */
+async function getGradingMethod(schoolId) {
+  const school = await prisma.school.findUnique({
+    where: { id: schoolId },
+    select: { gradingMethod: true },
+  });
+  return school?.gradingMethod ?? null;
+}
+
+/**
+ * Switches the school's grading method. This ONLY updates the School row
+ * — it never touches any already-computed SubjectMark/CgpaRecord rows, by
+ * design (see the long comment on School.gradingMethod in schema.prisma).
+ */
+async function updateGradingMethod(schoolId, method) {
+  return prisma.school.update({
+    where: { id: schoolId },
+    data: { gradingMethod: method },
+    select: { gradingMethod: true },
+  });
+}
+
+/**
+ * Every active user's id in a school, regardless of role — used to
+ * broadcast the "grading method changed" notification to literally
+ * everyone (admin, every HOD/faculty, every student).
+ */
+async function findAllUserIdsInSchool(schoolId) {
+  const users = await prisma.user.findMany({
+    where: { schoolId, deletedAt: null },
+    select: { id: true },
+  });
+  return users.map((u) => u.id);
+}
+
+module.exports = {
+  getActiveSystemForSchool,
+  listBySchool,
+  findById,
+  create,
+  update,
+  activate,
+  getGradingMethod,
+  updateGradingMethod,
+  findAllUserIdsInSchool,
+};

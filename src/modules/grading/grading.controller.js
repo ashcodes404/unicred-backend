@@ -53,4 +53,29 @@ const activate = asyncHandler(async (req, res) => {
   success(res, 200, "Grading system activated.", data);
 });
 
-module.exports = { list, create, update, activate };
+/**
+ * GET /api/grading-systems/method
+ * Current grading method for the school ("absolute" | "relative").
+ */
+const getMethod = asyncHandler(async (req, res) => {
+  const data = await service.getGradingMethod(req.user.schoolId);
+  success(res, 200, "Grading method fetched", data);
+});
+
+/**
+ * PATCH /api/grading-systems/method
+ * Admin switches the school's grading method. Only takes effect for
+ * marks submitted from now on — never touches already-computed results.
+ *
+ * Body: { gradingMethod: "absolute" | "relative", acknowledged: true }
+ * `acknowledged` must be true — it's the server-side half of the
+ * frontend's required warning/T&C checkbox (see grading.service.js's
+ * updateGradingMethod for why this is re-checked here, not just in the UI).
+ */
+const updateMethod = asyncHandler(async (req, res) => {
+  const { gradingMethod, acknowledged } = req.body;
+  const data = await service.updateGradingMethod(req.user.schoolId, req.user.userId, gradingMethod, acknowledged);
+  success(res, 200, `Grading method changed to "${data.gradingMethod}". Applies to future results only.`, data);
+});
+
+module.exports = { list, create, update, activate, getMethod, updateMethod };

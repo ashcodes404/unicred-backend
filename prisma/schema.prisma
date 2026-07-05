@@ -33,6 +33,11 @@ model School {
   queuedPlan               String?
   queuedPlanDurationMonths Int?
   queuedPlanStartsAt       DateTime?
+  // How marks get converted into a grade when a subject's marks are
+  // submitted (see submitMarks in results.service.js). Changing this
+  // NEVER touches marks/grades already stored — it only changes how
+  // FUTURE submitMarks calls behave. See GradingMethod enum below.
+  gradingMethod            GradingMethod                @default(absolute)
   departments              Department[]
   users                    User[]
   faculty                  Faculty[]
@@ -1129,6 +1134,18 @@ enum ResultStatus {
   under_review
   frozen
   published
+}
+
+// How a subject's marks get converted into a grade, school-wide.
+//   absolute — fixed marks-percentage bands (the school's GradeRule rows) —
+//              this is the long-standing default and behaviour.
+//   relative — "grading on a curve": grade is assigned from where a
+//              student's marks fall relative to their subject cohort's
+//              mean and standard deviation, computed at submit time. See
+//              computeRelativeGrades() in utils/grading.js.
+enum GradingMethod {
+  absolute
+  relative
 }
 
 enum ReappearStatus {

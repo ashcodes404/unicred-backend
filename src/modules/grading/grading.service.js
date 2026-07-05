@@ -3,6 +3,10 @@
 const AppError = require("../../utils/AppError");
 const repo = require("./grading.repository");
 const { cached, invalidate } = require("../../utils/cache");
+const { notifyMany } = require("../../utils/notify");
+const NOTIFICATION_TYPES = require("../../constants/notificationTypes");
+
+const GRADING_METHODS = ["absolute", "relative"];
 
 /**
  * Validates that grade rules are complete and correct:
@@ -96,10 +100,83 @@ async function activateGradingSystem(id, schoolId) {
   return activated;
 }
 
+/**
+ * getGradingMethod — the school's current grading method, for the
+ * Grading System page to show ("Absolute" / "Relative") and to decide
+ * which toggle option to offer.
+ */
+async function getGradingMethod(schoolId) {
+  const method = await repo.getGradingMethod(schoolId);
+  if (!method) throw new AppError(404, "School not found");
+  return { gradingMethod: method };
+}
+
+/**
+ * updateGradingMethod — admin switches the school between absolute and
+ * relative grading.
+ *
+ * WHY `acknowledged` IS REQUIRED AND CHECKED HERE (NOT JUST IN THE UI):
+ * The frontend shows a warning + a "I understand" checkbox before this
+ * can be submitted — but a backend endpoint must never trust that the
+ * frontend actually enforced that. Re-checking `acknowledged === true`
+ * here means a raw API call (curl, Postman, a compromised/buggy frontend
+ * build) can't silently skip the warning.
+ *
+ * WHY THIS NEVER TOUCHES PAST RESULTS:
+ * This function only writes to the School row. Every SubjectMark and
+ * CgpaRecord already in the database was computed at submit/publish time
+ * and stored with its grade already baked in — nothing here re-opens or
+ * recomputes them. The new method only takes effect the next time
+ * submitMarks() runs (see results.service.js), which reads the CURRENT
+ * value of School.gradingMethod fresh on every call.
+ *
+ * @param {number} schoolId
+ * @param {number} adminUserId - excluded from the "everyone notified" list (they already know — they made the change)
+ * @param {string} newMethod - "absolute" | "relative"
+ * @param {boolean} acknowledged - must be true (the UI's required warning checkbox)
+ */
+async function updateGradingMethod(schoolId, adminUserId, newMethod, acknowledged) {
+  if (!GRADING_METHODS.includes(newMethod)) {
+    throw new AppError(400, `gradingMethod must be one of: ${GRADING_METHODS.join(", ")}`);
+  }
+  if (acknowledged !== true) {
+    throw new AppError(400, "You must acknowledge the warning before changing the grading method.");
+  }
+
+  const currentMethod = await repo.getGradingMethod(schoolId);
+  if (!currentMethod) throw new AppError(404, "School not found");
+  if (currentMethod === newMethod) {
+    throw new AppError(400, `Grading method is already set to "${newMethod}".`);
+  }
+
+  const updated = await repo.updateGradingMethod(schoolId, newMethod);
+
+  // Notify every OTHER user in the school — admin/HOD/faculty/student
+  // alike — since this changes how everyone's future results are graded.
+  // Wrapped in try/catch so a notification failure can never fail the
+  // actual setting change (same defensive pattern used everywhere else
+  // this app fans out notifications, e.g. announcement.service.js).
+  try {
+    const allUserIds = await repo.findAllUserIdsInSchool(schoolId);
+    const recipientIds = allUserIds.filter((id) => id !== adminUserId);
+    const message =
+      newMethod === "relative"
+        ? "Your school has switched to RELATIVE grading (grading on a curve). This only applies to marks submitted from now on — past results are unchanged."
+        : "Your school has switched back to ABSOLUTE grading (fixed marks bands). This only applies to marks submitted from now on — past results are unchanged.";
+    await notifyMany(recipientIds, NOTIFICATION_TYPES.GRADING_METHOD_CHANGED, message, null);
+  } catch (err) {
+    console.error(`[grading] failed to notify school ${schoolId} of grading method change:`, err);
+  }
+
+  return { gradingMethod: updated.gradingMethod };
+}
+
 module.exports = {
   listGradingSystems,
   getActiveSystem,
   createGradingSystem,
   updateGradingSystem,
   activateGradingSystem,
+  getGradingMethod,
+  updateGradingMethod,
 };
