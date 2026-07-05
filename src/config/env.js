@@ -28,6 +28,11 @@ require("dotenv").config();
  *   outgoing email gets redirected to it, no matter who the real recipient
  *   was. Remove this line once a domain is verified, to go back to sending
  *   to real recipients.>
+ * RUN_WORKER_IN_WEB=<set to "true" to ALSO start every BullMQ worker inside
+ *   this same process (see src/index.js) — used on Render's free tier so one
+ *   web service runs both the API and the worker, instead of paying for two.
+ *   Leave unset in local dev if you still want to run `npm run worker:dev`
+ *   as its own separate process.>
  */
 
 
@@ -56,5 +61,8 @@ module.exports = {
   // TEMPORARY — see the comment above this file's env-var list. undefined
   // (not set) means "off": emails go to their real recipient as normal.
   EMAIL_TEST_RECIPIENT: process.env.EMAIL_TEST_RECIPIENT || null,
+  // === "true" (a string, since ALL env vars arrive as strings) — anything
+  // else (including unset) is treated as false. See src/index.js.
+  RUN_WORKER_IN_WEB: process.env.RUN_WORKER_IN_WEB === "true",
 };
 
